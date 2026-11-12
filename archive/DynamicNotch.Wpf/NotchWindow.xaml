@@ -1,0 +1,210 @@
+<Window x:Class="DynamicNotch.NotchWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="clr-namespace:DynamicNotch.Design"
+        xmlns:v="clr-namespace:DynamicNotch.Views"
+        xmlns:a="clr-namespace:DynamicNotch.Animation"
+        Title="Dynamic Notch"
+        Width="{x:Static d:Theme.HostWidth}" Height="{x:Static d:Theme.HostHeight}"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="NoResize" ShowInTaskbar="False" ShowActivated="False" Topmost="True" Focusable="False"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        FontFamily="{x:Static d:Theme.Font}">
+
+    <!-- Root has no background: only the notch shape and its content are hit-testable, so the
+         transparent rest of the window is click-through. -->
+    <Grid x:Name="Root">
+        <Grid x:Name="NotchRoot" AllowDrop="True"
+              MouseEnter="Notch_MouseEnter" MouseLeave="Notch_MouseLeave"
+              PreviewMouseLeftButtonDown="Notch_PreviewMouseDown"
+              DragEnter="Notch_DragEnter" DragOver="Notch_DragOver" DragLeave="Notch_DragLeave" Drop="Notch_Drop">
+
+            <!-- Near-invisible hover strip so the minimal (6px) notch is easy to reach. -->
+            <Border x:Name="HoverStrip" VerticalAlignment="Top" HorizontalAlignment="Center"
+                    Height="14" Width="220" Background="#01000000" />
+
+            <!-- The notch body: shape, shadow, inner highlight and drop glow. -->
+            <v:NotchShape x:Name="Shape" />
+
+            <!-- ===== Collapsed: battery ring (left edge) · time (true centre) · art + bars (right edge) =====
+                 Fixed width; the side groups follow the body edges with transforms, never layout. -->
+            <Grid x:Name="CollapsedLayer" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Height="{x:Static d:Theme.CollapsedHeight}" Width="{x:Static d:Theme.CollapsedPlayingWidth}"
+                  IsHitTestVisible="False" Opacity="0">
+                <v:BatteryRing x:Name="NotchRing" HorizontalAlignment="Left" VerticalAlignment="Center"
+                               Margin="{x:Static d:Theme.CollapsedPadding}"
+                               RingSize="{x:Static d:Theme.NotchRingSize}" Thickness="{x:Static d:Theme.NotchRingThickness}"
+                               Percent="{Binding Status.BatteryPercent}" IsCharging="{Binding Status.IsCharging}"
+                               Visibility="{Binding Status.HasBattery, Converter={StaticResource BoolToVis}}" />
+                <v:CrossfadeText x:Name="CollapsedTime" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                 TextStyle="{StaticResource ClockTimeText}" Text="{Binding Status.TimeText}" />
+                <StackPanel x:Name="CollapsedRight" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Margin="{x:Static d:Theme.CollapsedPadding}">
+                    <StackPanel x:Name="CollapsedMusic" Orientation="Horizontal" Visibility="Collapsed">
+                        <v:Visualizer x:Name="Bars" VerticalAlignment="Center" Margin="{x:Static d:Theme.GapRightS2}" />
+                        <Border x:Name="MiniArt" Width="{x:Static d:Theme.MiniArtSize}" Height="{x:Static d:Theme.MiniArtSize}"
+                                CornerRadius="{x:Static d:Theme.Radius}" Background="{x:Static d:Theme.TileBrush}">
+                            <Grid>
+                                <v:VectorIcon Data="{x:Static d:Icons.Music}" Size="10" Foreground="{x:Static d:Theme.SecondaryText}" />
+                                <Border CornerRadius="{x:Static d:Theme.Radius}">
+                                    <Border.Background>
+                                        <ImageBrush x:Name="MiniArtBrush" Stretch="UniformToFill" />
+                                    </Border.Background>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+            <!-- ===== Pill: transient notification ===== -->
+            <Grid x:Name="PillLayer" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Width="{x:Static d:Theme.PillWidth}" Height="{x:Static d:Theme.PillHeight}"
+                  Opacity="0" IsHitTestVisible="False" Cursor="Hand" RenderTransformOrigin="0.5,0"
+                  MouseLeftButtonUp="Pill_Click" MouseEnter="Pill_MouseEnter" MouseLeave="Pill_MouseLeave">
+                <Grid.RenderTransform>
+                    <ScaleTransform x:Name="PillScale" />
+                </Grid.RenderTransform>
+                <Grid Margin="{x:Static d:Theme.PillPadding}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="{x:Static d:Theme.GapS3}" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <!-- System events: vector icon in a rounded tile; apps: the sender's logo in the same tile. -->
+                    <Border x:Name="PillIconBox" Width="{x:Static d:Theme.PillIconSize}" Height="{x:Static d:Theme.PillIconSize}"
+                            VerticalAlignment="Center" CornerRadius="{x:Static d:Theme.Radius}"
+                            Background="{x:Static d:Theme.TileBrush}" BorderBrush="{x:Static d:Theme.TileBorderBrush}" BorderThickness="1">
+                        <Grid>
+                            <v:VectorIcon x:Name="PillGlyph" Size="{x:Static d:Theme.IconMedium}" Foreground="{x:Static d:Theme.PrimaryText}" />
+                            <Border x:Name="PillLogo" CornerRadius="{x:Static d:Theme.Radius}" Margin="-1" Visibility="Collapsed">
+                                <Border.Background>
+                                    <ImageBrush x:Name="PillLogoBrush" Stretch="UniformToFill" />
+                                </Border.Background>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                        <TextBlock x:Name="PillApp" Style="{StaticResource CaptionText}" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PillTitle" Style="{StaticResource BaseText}" FontWeight="Bold" FontSize="{x:Static d:Theme.FontPillTitle}" />
+                        <TextBlock x:Name="PillBody" Style="{StaticResource SecondaryText}" Margin="{x:Static d:Theme.GapTopS1}" />
+                    </StackPanel>
+                    <Border x:Name="PillBadge" Grid.Column="3" VerticalAlignment="Center" Margin="{x:Static d:Theme.GapLeftS2}" Padding="10,4"
+                            CornerRadius="{Binding ActualHeight, RelativeSource={RelativeSource Self}, Converter={StaticResource PillRadius}}" Background="{x:Static d:Theme.CardHoverBrush}">
+                        <TextBlock x:Name="PillBadgeText" Style="{StaticResource TimeText}" Foreground="{x:Static d:Theme.PrimaryText}" />
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <!-- ===== Expanded: header · pages · footer (+ Ask page, glow, preview card) ===== -->
+            <Grid x:Name="ExpandedLayer" VerticalAlignment="Top" HorizontalAlignment="Center" PreviewMouseMove="ExpandedLayer_PreviewMouseMove"
+                  Width="{x:Static d:Theme.ExpandedWidth}" Height="{x:Static d:Theme.ExpandedMaxHeight}"
+                  IsHitTestVisible="False">
+
+                <!-- Music page album glow: radial ellipse anchored at the bottom centre, behind the content,
+                     clipped by the notch shape. Two cached ellipses cross-fade between track colours. -->
+                <Canvas x:Name="GlowLayer" Width="{x:Static d:Theme.ExpandedWidth}" Height="{x:Static d:Theme.ExpandedHeight}"
+                        VerticalAlignment="Top" IsHitTestVisible="False" Opacity="0">
+                    <Grid x:Name="GlowGroup" Width="{x:Static d:Theme.GlowWidth}" Height="{x:Static d:Theme.GlowHeight}"
+                          RenderTransformOrigin="0.5,0.5">
+                        <Grid.RenderTransform>
+                            <ScaleTransform x:Name="GlowScale" />
+                        </Grid.RenderTransform>
+                        <Ellipse x:Name="GlowA">
+                            <Ellipse.CacheMode><BitmapCache /></Ellipse.CacheMode>
+                        </Ellipse>
+                        <Ellipse x:Name="GlowB" Opacity="0">
+                            <Ellipse.CacheMode><BitmapCache /></Ellipse.CacheMode>
+                        </Ellipse>
+                    </Grid>
+                </Canvas>
+
+                <Grid Margin="{x:Static d:Theme.ExpandedPadding}" Height="{x:Static d:Theme.ExpandedContentHeight}" VerticalAlignment="Top">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="{x:Static d:Theme.HeaderRow}" />
+                        <RowDefinition Height="{x:Static d:Theme.GapS2}" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="{x:Static d:Theme.FooterRow}" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Header: battery ring + bold time (shared with the collapsed notch) + lighter date · settings -->
+                    <Grid x:Name="HeaderHost" Grid.Row="0">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                            <v:BatteryRing x:Name="HeaderRing" VerticalAlignment="Center" Margin="{x:Static d:Theme.GapRightS2}"
+                                           RingSize="{x:Static d:Theme.HeaderRingSize}" Thickness="{x:Static d:Theme.HeaderRingThickness}"
+                                           Percent="{Binding Status.BatteryPercent}" IsCharging="{Binding Status.IsCharging}"
+                                           Visibility="{Binding Status.HasBattery, Converter={StaticResource BoolToVis}}" />
+                            <v:CrossfadeText x:Name="HeaderTime" VerticalAlignment="Center"
+                                             TextStyle="{StaticResource HeaderTimeText}" Text="{Binding Status.TimeText}" />
+                            <Border a:Stagger.Order="0" VerticalAlignment="Center" Margin="{x:Static d:Theme.GapLeftS2}">
+                                <v:CrossfadeText TextStyle="{StaticResource HeaderDateText}" Text="{Binding Status.DateText}" />
+                            </Border>
+                        </StackPanel>
+                        <Border a:Stagger.Order="0" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Style="{StaticResource SmallIconButton}" Content="{x:Static d:Icons.Settings}" ToolTip="Settings"
+                                    Command="{Binding OpenSettingsCommand}" />
+                        </Border>
+                    </Grid>
+
+                    <!-- Horizontal pager clipped to the viewport -->
+                    <Canvas x:Name="PageViewport" Grid.Row="2" ClipToBounds="True">
+                        <StackPanel x:Name="PageStrip" Orientation="Horizontal">
+                            <StackPanel.RenderTransform>
+                                <TranslateTransform x:Name="PageTranslate" />
+                            </StackPanel.RenderTransform>
+                            <v:MusicPage x:Name="MusicPageView" DataContext="{Binding Music}" />
+                            <v:ClipboardShelfPage x:Name="ShelfPageView" />
+                        </StackPanel>
+                    </Canvas>
+
+                    <!-- Footer: notification-permission hint · page dots · connected devices -->
+                    <Grid x:Name="FooterHost" Grid.Row="3">
+                        <Grid a:Stagger.Order="5">
+                            <Button HorizontalAlignment="Left" VerticalAlignment="Center" Style="{StaticResource TextButton}"
+                                    Command="{Binding EnableNotificationsCommand}"
+                                    Visibility="{Binding ShowNotificationPrompt, Converter={StaticResource BoolToVis}}">
+                                <StackPanel Orientation="Horizontal">
+                                    <v:VectorIcon Data="{x:Static d:Icons.Bell}" Size="{x:Static d:Theme.IconSmall}" Foreground="{x:Static d:Theme.SecondaryText}" />
+                                    <TextBlock Text="{Binding NotificationPromptText}" Margin="{x:Static d:Theme.GapLeftS2}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <v:PageNavigator x:Name="Dots" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <ItemsControl x:Name="DevicesRow" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                          ItemsSource="{Binding Devices.Items}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><v:ReflowPanel /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Height="{x:Static d:Theme.DeviceRingSize}" Background="Transparent"
+                                              a:MotionBehaviors.AnimateIn="True"
+                                              a:MotionBehaviors.Leaving="{Binding IsLeaving}"
+                                              ToolTip="{Binding Tooltip}">
+                                            <v:BatteryRing HorizontalAlignment="Center" VerticalAlignment="Center" NumberOnHover="True"
+                                                           RingSize="{x:Static d:Theme.DeviceRingSize}" Thickness="{x:Static d:Theme.DeviceRingThickness}"
+                                                           Glyph="{Binding Glyph}" Percent="{Binding RingPercent}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </Grid>
+                </Grid>
+
+                <!-- Page 3, Ask: its own header/footer; slides with the pager (transform only). -->
+                <Grid x:Name="AskLayer" VerticalAlignment="Top" IsHitTestVisible="False">
+                    <Grid.RenderTransform>
+                        <TranslateTransform x:Name="AskTranslate" />
+                    </Grid.RenderTransform>
+                    <v:AskPage x:Name="AskPageView" />
+                </Grid>
+
+                <!-- Clipboard hover preview card (above everything, never hit-testable). -->
+                <Canvas x:Name="PreviewLayer" IsHitTestVisible="False">
+                    <v:ClipboardPreviewCard x:Name="PreviewCard" Visibility="Collapsed" Opacity="0" RenderTransformOrigin="0,0.5" />
+                </Canvas>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

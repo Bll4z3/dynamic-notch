@@ -1,0 +1,184 @@
+<UserControl x:Class="DynamicNotch.Views.AskPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="clr-namespace:DynamicNotch.Design"
+             xmlns:v="clr-namespace:DynamicNotch.Views"
+             xmlns:a="clr-namespace:DynamicNotch.Animation">
+    <UserControl.Resources>
+        <!-- Send: dimmed (not disabled) when there's nothing to send; the command ignores the click. -->
+        <Style x:Key="SendPill" TargetType="Button" BasedOn="{StaticResource PillButton}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Ask.IsSendActive}" Value="False">
+                    <Setter Property="Opacity" Value="0.4" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="BlockCaption" TargetType="TextBlock" BasedOn="{StaticResource CaptionText}">
+            <Setter Property="Foreground" Value="{x:Static d:Theme.SecondaryText}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Resources>
+
+    <!-- DataContext: MainViewModel (Ask.*, Status.*). Width is set per state from code. -->
+    <Grid x:Name="Root" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="{x:Static d:Theme.AskPadding}"
+          Focusable="True" FocusVisualStyle="{x:Null}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="{x:Static d:Theme.HeaderRow}" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Top row: Claude logo + "Ask Claude" · clock · settings -->
+        <Grid Grid.Row="0" a:Stagger.Order="0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                <v:ClaudeLogo Size="{x:Static d:Theme.IconSmall}" Foreground="{x:Static d:Theme.PrimaryText}" />
+                <TextBlock Style="{StaticResource SectionText}" Text="Ask Claude" Foreground="{x:Static d:Theme.PrimaryText}"
+                           Margin="{x:Static d:Theme.GapLeftS2}" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <v:CrossfadeText VerticalAlignment="Center" TextStyle="{StaticResource ClockTimeText}" Text="{Binding Status.TimeText}" />
+                <Button Style="{StaticResource SmallIconButton}" Content="{x:Static d:Icons.Settings}" ToolTip="Settings"
+                        Command="{Binding OpenSettingsCommand}" Margin="{x:Static d:Theme.GapLeftS1}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Two panels that cross-fade with springs: the empty box, and the conversation. -->
+        <Grid Grid.Row="1">
+
+            <!-- ===== Idle ===== -->
+            <StackPanel x:Name="IdlePanel" Margin="{x:Static d:Theme.GapTopS2}">
+                <!-- Attached screenshot: thumbnail in the image's own shape, with a small X; hover to enlarge -->
+                <Grid HorizontalAlignment="Left" Margin="{x:Static d:Theme.AskChipMargin}"
+                      Visibility="{Binding Ask.HasAttachment, Converter={StaticResource BoolToVis}}"
+                      a:MotionBehaviors.AnimateIn="True">
+                    <v:ImageThumb Source="{Binding Ask.AttachmentThumb}" MouseEnter="Thumb_MouseEnter" MouseLeave="Thumb_MouseLeave" />
+                    <Button Style="{StaticResource OverlayButton}" Content="{x:Static d:Icons.Close}" ToolTip="Remove screenshot"
+                            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="{x:Static d:Theme.AskChipClose}"
+                            Command="{Binding Ask.RemoveAttachmentCommand}" />
+                </Grid>
+                <!-- Text box · Send · Select area -->
+                <Grid a:Stagger.Order="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="Input" Style="{StaticResource AskInput}" Tag="Ask anything, or about your screen…"
+                             Text="{Binding Ask.InputText, UpdateSourceTrigger=PropertyChanged}"
+                             PreviewKeyDown="Input_PreviewKeyDown" PreviewMouseLeftButtonDown="Input_PreviewMouseDown" />
+                    <Button Grid.Column="1" Style="{StaticResource SendPill}" Tag="{x:Static d:Icons.ArrowUp}" Content="Send"
+                            Margin="{x:Static d:Theme.GapLeftS2}" VerticalAlignment="Center" Command="{Binding Ask.SendCommand}" />
+                    <Button Grid.Column="2" Style="{StaticResource QuietPillButton}" Tag="{x:Static d:Icons.Crop}" Content="Select area"
+                            Margin="{x:Static d:Theme.GapLeftS2}" VerticalAlignment="Center" Command="{Binding Ask.SelectAreaCommand}" />
+                </Grid>
+                <StackPanel a:Stagger.Order="2" Margin="{x:Static d:Theme.GapTopS2}">
+                    <TextBlock x:Name="HotkeyCaption" Style="{StaticResource CaptionText}" HorizontalAlignment="Center" />
+                    <v:PageNavigator x:Name="Dots" HorizontalAlignment="Center" Margin="{x:Static d:Theme.GapTopS1}" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- ===== Conversation (thinking / answer / error) ===== -->
+            <StackPanel x:Name="ConversationPanel" Margin="{x:Static d:Theme.GapTopS2}" Visibility="Collapsed">
+                <ScrollViewer x:Name="AnswerScroll" Style="{StaticResource ThinScroll}" MaxHeight="{x:Static d:Theme.AskAnswerScrollMaxHeight}"
+                              PanningMode="VerticalOnly">
+                    <ItemsControl x:Name="TurnList" ItemsSource="{Binding Ask.Turns}" Focusable="False">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel x:Name="TurnRoot" Margin="{x:Static d:Theme.TurnBottom}">
+                                    <!-- QUESTION: subtle card, "You", screenshot, question text -->
+                                    <Border Background="{x:Static d:Theme.QuestionCardBrush}" CornerRadius="{x:Static d:Theme.RadiusSmall}"
+                                            Padding="{x:Static d:Theme.QuestionCardPadding}" a:MotionBehaviors.AnimateIn="True">
+                                        <StackPanel>
+                                            <TextBlock Style="{StaticResource BlockCaption}" Text="You" />
+                                            <v:ImageThumb Source="{Binding Thumb}" HorizontalAlignment="Left" Margin="{x:Static d:Theme.GapTopS2}"
+                                                          MaxWidth="{x:Static d:Theme.ThumbHeaderMaxWidth}" MaxHeight="{x:Static d:Theme.ThumbHeaderMaxHeight}"
+                                                          Visibility="{Binding HasThumb, Converter={StaticResource BoolToVis}}"
+                                                          MouseEnter="Thumb_MouseEnter" MouseLeave="Thumb_MouseLeave" />
+                                            <TextBlock Text="{Binding Question}" TextWrapping="Wrap" Margin="{x:Static d:Theme.GapTopS1}"
+                                                       FontFamily="{x:Static d:Theme.Font}" FontSize="{x:Static d:Theme.QuestionFontSize}"
+                                                       Foreground="{x:Static d:Theme.QuestionTextBrush}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Height="1" Background="{x:Static d:Theme.HighlightBorderBrush}" Margin="{x:Static d:Theme.TurnGap}" />
+
+                                    <!-- ANSWER: logo + "Claude", then the answer (or thinking / error) -->
+                                    <StackPanel a:MotionBehaviors.AnimateIn="True" a:MotionBehaviors.AnimateInDelay="{x:Static d:Motion.TurnAnswerDelayMs}">
+                                        <Grid>
+                                            <StackPanel Orientation="Horizontal">
+                                                <v:ClaudeLogo Size="{x:Static d:Theme.AnswerLogoSize}" Foreground="{x:Static d:Theme.PrimaryText}" />
+                                                <TextBlock Style="{StaticResource BlockCaption}" Text="Claude" Margin="{x:Static d:Theme.GapLeftS2}" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock Text="Claude is thinking…" Style="{StaticResource SecondaryText}" Margin="{x:Static d:Theme.GapTopS2}"
+                                                   a:MotionBehaviors.Pulse="True"
+                                                   Visibility="{Binding IsThinking, Converter={StaticResource BoolToVis}}" />
+                                        <v:MarkdownView Markdown="{Binding Answer}" Streaming="{Binding IsStreaming}" Margin="{x:Static d:Theme.GapTopS2}"
+                                                        Visibility="{Binding HasAnswer, Converter={StaticResource BoolToVis}}"
+                                                        PreviewMouseLeftButtonDown="Input_PreviewMouseDown" />
+                                        <StackPanel Visibility="{Binding IsError, Converter={StaticResource BoolToVis}}" Margin="{x:Static d:Theme.GapTopS2}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <v:VectorIcon Data="{x:Static d:Icons.Alert}" Size="{x:Static d:Theme.IconMedium}"
+                                                              Foreground="{x:Static d:Theme.DangerBrush}" VerticalAlignment="Top" />
+                                                <TextBlock Grid.Column="1" Style="{StaticResource BaseText}" Text="{Binding ErrorText}" TextWrapping="Wrap"
+                                                           Margin="{x:Static d:Theme.GapLeftS2}" VerticalAlignment="Center" />
+                                            </Grid>
+                                            <StackPanel Orientation="Horizontal" Margin="{x:Static d:Theme.GapTopS2}"
+                                                        Visibility="{Binding IsLatest, Converter={StaticResource BoolToVis}}">
+                                                <Button Style="{StaticResource PillButton}" Tag="{x:Static d:Icons.Retry}" Content="Retry"
+                                                        Command="{Binding DataContext.Ask.RetryCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                                                <Button Style="{StaticResource QuietPillButton}" Tag="{x:Static d:Icons.Settings}" Content="Open Settings"
+                                                        Margin="{x:Static d:Theme.GapLeftS2}"
+                                                        Command="{Binding DataContext.OpenSettingsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        Visibility="{Binding ShowSettingsButton, Converter={StaticResource BoolToVis}}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </StackPanel>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsLatest}" Value="False">
+                                        <Setter TargetName="TurnRoot" Property="Opacity" Value="{x:Static d:Theme.TurnOlderOpacity}" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <Grid HorizontalAlignment="Left" Margin="{x:Static d:Theme.GapTopS1}"
+                      Visibility="{Binding Ask.HasAttachment, Converter={StaticResource BoolToVis}}">
+                    <v:ImageThumb Source="{Binding Ask.AttachmentThumb}" MouseEnter="Thumb_MouseEnter" MouseLeave="Thumb_MouseLeave" />
+                    <Button Style="{StaticResource OverlayButton}" Content="{x:Static d:Icons.Close}" ToolTip="Remove screenshot"
+                            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="{x:Static d:Theme.AskChipClose}"
+                            Command="{Binding Ask.RemoveAttachmentCommand}" />
+                </Grid>
+                <!-- Follow-up: text box · Send · Select area · New chat (· Stop while answering) -->
+                <Grid Margin="{x:Static d:Theme.GapTopS1}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="FollowUp" Style="{StaticResource AskInput}" Tag="Ask a follow-up…"
+                             Text="{Binding Ask.InputText, UpdateSourceTrigger=PropertyChanged}"
+                             PreviewKeyDown="Input_PreviewKeyDown" PreviewMouseLeftButtonDown="Input_PreviewMouseDown" />
+                    <Button Grid.Column="1" Style="{StaticResource SmallIconButton}" Content="{x:Static d:Icons.Stop}" ToolTip="Stop"
+                            Margin="{x:Static d:Theme.GapLeftS1}" VerticalAlignment="Center" Command="{Binding Ask.StopCommand}"
+                            Visibility="{Binding Ask.IsBusy, Converter={StaticResource BoolToVis}}" />
+                    <Button Grid.Column="2" Style="{StaticResource SendPill}" Tag="{x:Static d:Icons.ArrowUp}" Content="Send"
+                            Margin="{x:Static d:Theme.GapLeftS2}" VerticalAlignment="Center" Command="{Binding Ask.SendCommand}" />
+                    <Button Grid.Column="3" Style="{StaticResource QuietPillButton}" Tag="{x:Static d:Icons.Crop}" Content="Select area"
+                            Margin="{x:Static d:Theme.GapLeftS2}" VerticalAlignment="Center" Command="{Binding Ask.SelectAreaCommand}" />
+                    <Button Grid.Column="4" Style="{StaticResource QuietPillButton}" Tag="{x:Static d:Icons.NewChat}" Content="New chat"
+                            Margin="{x:Static d:Theme.GapLeftS2}" VerticalAlignment="Center" Command="{Binding Ask.NewChatCommand}" />
+                </Grid>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- .NET 8, Windows 10 1809+ (17763). The 19041 SDK projection gives us the WinRT APIs. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <!-- Run on .NET 9 if the .NET 8 desktop runtime is not installed. -->
+    <RollForward>Major</RollForward>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <AssemblyName>DynamicNotch</AssemblyName>
+    <RootNamespace>DynamicNotch</RootNamespace>
+    <Version>1.0.0</Version>
+    <!-- WFAC010 targets WinForms apps; this is a WPF app whose DPI mode lives in app.manifest. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WinForms is only used for the tray icon; keep its namespaces out of the global usings. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
+    <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Inter (SIL Open Font Licence), embedded so the UI looks the same on every PC. -->
+    <Resource Include="Assets\Fonts\*.ttf" />
+    <None Include="Assets\Fonts\Inter-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Official Claude logo, supplied by you: Assets\claude-logo.svg or .png (optional; a sparkle shows without it). -->
+    <Content Include="Assets\claude-logo.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

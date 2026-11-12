@@ -1,0 +1,188 @@
+using System.ComponentModel;
+using DynamicNotch.Animation;
+using DynamicNotch.Design;
+using DynamicNotch.Services;
+using DynamicNotch.ViewModels;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+
+namespace DynamicNotch.Views;
+
+/// <summary>
+/// Page 1, Music (same layout as the WPF MusicPage): album art on the left (click to cycle players),
+/// and a details column centred on the same line as the cover: title, artist, source, the seek bar
+/// with elapsed / remaining, and the transport. The art pops on track changes and squashes slightly
+/// when paused; the seek bar fill follows the album-art accent.
+/// </summary>
+public sealed class MusicPage : Grid
+{
+    private readonly MusicViewModel _vm;
+    private readonly Grid _artHost = new(), _artInner = new(), _details = new();
+    private readonly Border _artStagger = new(), _artCard = new(), _artImage = new();
+    private readonly ImageBrush _artBrush = new() { Stretch = Stretch.UniformToFill };
+    private readonly StackPanel _titleBlock = new(), _transport = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+    private readonly Grid _progress = new();
+    private readonly TextBlock _title = new(), _artist = new(), _source = new(), _elapsed = new(), _remaining = new();
+    private readonly SeekBar _seek = new();
+    private readonly IconButton _prev = new(), _play = new(Theme.PlayButtonSize, Theme.IconHero), _next = new();
+    private CompSpring? _artPop;
+    private bool _lastPlaying;
+    private Windows.UI.Color _accent = Theme.AccentColor;
+
+    public MusicPage(MusicViewModel vm)
+    {
+        _vm = vm;
+        ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        ColumnDefinitions.Add(new ColumnDefinition { Width = Theme.GapS5 });
+        ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Album art. ArtHost carries the shared-element flight (mini art ⇄ album art).
+        _artHost.Width = _artHost.Height = Theme.AlbumArtSize;
+        _artHost.VerticalAlignment = VerticalAlignment.Center;
+        _artCard.CornerRadius = Theme.Radius;
+        _artCard.Background = Theme.TileBrush;
+        _artCard.BorderBrush = Theme.TileBorderBrush;
+        _artCard.BorderThickness = new Thickness(1);
+        _artImage.CornerRadius = Theme.Radius;
+        _artImage.Margin = new Thickness(-1);
+        _artImage.Background = _artBrush;
+        _artInner.Children.Add(new VectorIcon { Data = Icons.Music, Size = 40, Foreground = Theme.TertiaryText, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
+        _artInner.Children.Add(_artImage);
+        _artCard.Child = _artInner;
+        _artStagger.Child = _artCard;
+        _artHost.Children.Add(_artStagger);
+        Children.Add(_artHost);
+        Motions.PressScale(_artCard);
+        _artCard.Tapped += (_, e) => { if (_vm.HasMultipleSessions) _vm.CycleSessionCommand.Execute(null); e.Handled = true; };
+
+        // Details column: centred on the same horizontal line as the cover.
+        SetColumn(_details, 2);
+        _details.VerticalAlignment = VerticalAlignment.Center;
+        foreach (var h in new[] { GridLength.Auto, Theme.GapS3, GridLength.Auto, Theme.GapS1, GridLength.Auto })
+            _details.RowDefinitions.Add(new RowDefinition { Height = h });
+
+        _title.Style = StyleOf("TitleText");
+        _artist.Style = StyleOf("SecondaryText");
+        _artist.Margin = Theme.GapTopS1;
+        _source.Style = StyleOf("CaptionText");
+        _source.Margin = Theme.GapTopS1;
+        _titleBlock.Children.Add(_title);
+        _titleBlock.Children.Add(_artist);
+        _titleBlock.Children.Add(_source);
+        _details.Children.Add(_titleBlock);
+
+        // Progress: elapsed | bar | remaining (bold, tabular, +2pt)
+        SetRow(_progress, 2);
+        _progress.ColumnDefinitions.Add(new ColumnDefinition { Width = Theme.TimeColumn });
+        _progress.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _progress.ColumnDefinitions.Add(new ColumnDefinition { Width = Theme.TimeColumn });
+        _elapsed.Style = _remaining.Style = StyleOf("MusicTimeText");
+        _elapsed.VerticalAlignment = _remaining.VerticalAlignment = VerticalAlignment.Center;
+        _remaining.HorizontalAlignment = HorizontalAlignment.Right;
+        SetColumn(_seek, 1);
+        SetColumn(_remaining, 2);
+        _progress.Children.Add(_elapsed);
+        _progress.Children.Add(_seek);
+        _progress.Children.Add(_remaining);
+        _details.Children.Add(_progress);
+
+        // Transport: outline prev/next, large filled play/pause.
+        SetRow(_transport, 4);
+        _prev.Icon = Icons.Prev;
+        _next.Icon = Icons.Next;
+        _play.Icon = Icons.Play;
+        _play.Margin = Theme.TransportGap;
+        _prev.Command = _vm.PreviousCommand;
+        _play.Command = _vm.PlayPauseCommand;
+        _next.Command = _vm.NextCommand;
+        _transport.Children.Add(_prev);
+        _transport.Children.Add(_play);
+        _transport.Children.Add(_next);
+        _details.Children.Add(_transport);
+        Children.Add(_details);
+
+        _seek.ScrubStarted += _vm.BeginScrub;
+        _seek.Scrubbing += _vm.PreviewScrub;
+        _seek.ScrubCommitted += _vm.CommitScrub;
+
+        Loaded += (_, _) =>
+        {
+            if (_artPop != null) return;
+            var c = Anim.VisualOf(_artInner).Compositor;
+            (_artPop, var set) = Motions.Value(c, Motion.Pop, 1);
+            Motions.CentreOrigin(_artInner);
+            Anim.VisualOf(_artInner).StartAnimation("Scale", Anim.Expr(c, "Vector3(p.v, p.v, 1)", ("p", set)));
+            _lastPlaying = _vm.IsPlaying;
+            if (!_lastPlaying) _artPop.Snap(0.94);
+        };
+        _vm.PropertyChanged += OnVmChanged;
+        _vm.TrackChanged += OnTrackChanged;
+        Refresh("");
+    }
+
+    /// <summary>The element that carries the shared-element (mini art ⇄ album art) flight.</summary>
+    public FrameworkElement ArtElement => _artHost;
+
+    /// <summary>Blocks for the staggered entrance, with their order (same orders as the WPF page).</summary>
+    public IEnumerable<(FrameworkElement element, int order)> StaggerBlocks =>
+        new (FrameworkElement, int)[] { (_artStagger, 1), (_titleBlock, 2), (_progress, 3), (_transport, 4) };
+
+    /// <summary>Vertical midpoints (in this page's coordinates) of the cover and of the details column.</summary>
+    public (double cover, double details) MeasureCentres()
+    {
+        var art = _artHost.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, _artHost.ActualHeight / 2));
+        var info = _details.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, _details.ActualHeight / 2));
+        return (art.Y, info.Y);
+    }
+
+    private static Style StyleOf(string key) => (Style)Application.Current.Resources[key];
+
+    private void OnVmChanged(object? sender, PropertyChangedEventArgs e) => Refresh(e.PropertyName ?? "");
+
+    private async void Refresh(string name)
+    {
+        bool all = name == "";
+        if (all || name is nameof(MusicViewModel.Title) or nameof(MusicViewModel.Artist) or nameof(MusicViewModel.SessionHint))
+        {
+            _title.Text = _vm.Title;
+            _artist.Text = _vm.Artist;
+            _source.Text = _vm.SessionHint;
+            ToolTipService.SetToolTip(_artCard, string.IsNullOrEmpty(_vm.SessionHint) ? null : _vm.SessionHint);
+        }
+        if (all || name == nameof(MusicViewModel.ElapsedText)) _elapsed.Text = _vm.ElapsedText;
+        if (all || name == nameof(MusicViewModel.RemainingText)) _remaining.Text = _vm.RemainingText;
+        if (all || name == nameof(MusicViewModel.Progress)) _seek.Value = _vm.Progress;
+        if (all)
+        {
+            _seek.IsSeekable = _vm.CanSeek;
+            _prev.Enabled = _vm.CanPrevious;
+            _next.Enabled = _vm.CanNext;
+            _play.Enabled = _vm.HasMedia;
+            UpdatePlayGlyph();
+
+            var art = _vm.Artwork;
+            _artImage.Visibility = art != null ? Visibility.Visible : Visibility.Collapsed;
+            var target = art == null ? Theme.AccentColor : AlbumColorService.Extract(art);
+            if (target != _accent) { _accent = target; _seek.SetAccent(target, animate: IsLoaded); }
+            var source = await ImageLoader.ToSourceAsync(art);
+            if (ReferenceEquals(art, _vm.Artwork)) _artBrush.ImageSource = source;
+        }
+    }
+
+    private void UpdatePlayGlyph()
+    {
+        bool playing = _vm.IsPlaying;
+        _play.Icon = playing ? Icons.Pause : Icons.Play;
+        if (playing == _lastPlaying) return;
+        _lastPlaying = playing;
+        _artPop?.SetTarget(playing ? 1 : 0.94, Motion.Pop); // subtle squash on the art when play state flips
+    }
+
+    private void OnTrackChanged()
+    {
+        if (_artPop == null) return;
+        _artPop.Snap(0.88);
+        _artPop.SetTarget(_vm.IsPlaying ? 1 : 0.94, Motion.Pop);
+    }
+}

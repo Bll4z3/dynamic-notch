@@ -1,0 +1,371 @@
+using System.Text;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using DynamicNotch.Design;
+using DynamicNotch.Services;
+
+namespace DynamicNotch.ViewModels;
+
+public enum AskState { Idle, Thinking, Answer, Error }
+
+/// <summary>
+/// The Ask page: one box for plain questions or questions about an attached screenshot, streamed
+/// answers, follow-ups in the same conversation, stop / retry / new chat. The conversation lives in
+/// memory only; it is never written to disk or logged.
+/// </summary>
+public sealed class AskViewModel : ObservableObject
+{
+    private readonly ClaudeService _claude;
+    private readonly SecretStore _secrets;
+    private readonly Dispatcher _ui;
+    private readonly List<ChatMessage> _history = new();
+    private readonly StringBuilder _answer = new();
+    private CancellationTokenSource? _cts;
+
+    public AskViewModel(ClaudeService claude, SecretStore secrets)
+    {
+        _claude = claude;
+        _secrets = secrets;
+        _ui = Dispatcher.CurrentDispatcher;
+
+        SendCommand = new RelayCommand(Send);
+        StopCommand = new RelayCommand(Stop);
+        RetryCommand = new RelayCommand(Retry);
+        NewChatCommand = new RelayCommand(NewChat);
+        CopyCommand = new RelayCommand(CopyAnswer);
+        RemoveAttachmentCommand = new RelayCommand(() => Attachment = null);
+        SelectAreaCommand = new RelayCommand(() => SelectAreaRequested?.Invoke());
+        OpenSettingsCommand = new RelayCommand(() => OpenSettingsRequested?.Invoke());
+
+        // The page picks up a newly saved key immediately (and drops a stale "add a key" error).
+        _secrets.Changed += () =>
+        {
+            OnPropertyChanged(nameof(HasKey));
+            if (State == AskState.Error && ErrorKind is ClaudeErrorKind.NoKey or ClaudeErrorKind.InvalidKey && _secrets.HasKey)
+                State = _history.Count > 0 && _history[^1].Role == "assistant" ? AskState.Answer : AskState.Idle;
+        };
+    }
+
+    public ICommand SendCommand { get; }
+    public ICommand StopCommand { get; }
+    public ICommand RetryCommand { get; }
+    public ICommand NewChatCommand { get; }
+    public ICommand CopyCommand { get; }
+    public ICommand RemoveAttachmentCommand { get; }
+    public ICommand SelectAreaCommand { get; }
+    public ICommand OpenSettingsCommand { get; }
+
+    /// <summary>The window runs the region selector and calls <see cref="Attach"/> with the result.</summary>
+    public event Action? SelectAreaRequested;
+    public event Action? OpenSettingsRequested;
+    /// <summary>Raised when the answer text grows (the view re-renders on a short throttle).</summary>
+    public event Action? AnswerChanged;
+
+    public bool HasKey => _secrets.HasKey;
+
+    // ---- State -------------------------------------------------------------------------------
+    private AskState _state = AskState.Idle;
+    public AskState State
+    {
+        get => _state;
+        private set
+        {
+            if (!Set(ref _state, value)) return;
+            OnPropertyChanged(nameof(IsIdle));
+            OnPropertyChanged(nameof(IsThinking));
+            OnPropertyChanged(nameof(IsAnswer));
+            OnPropertyChanged(nameof(IsError));
+            OnPropertyChanged(nameof(HasConversation));
+        }
+    }
+    public bool IsIdle => State == AskState.Idle;
+    public bool IsThinking => State == AskState.Thinking;
+    public bool IsAnswer => State == AskState.Answer;
+    public bool IsError => State == AskState.Error;
+    public bool HasConversation => State != AskState.Idle || _history.Count > 0;
+
+    private bool _isBusy;
+    public bool IsBusy { get => _isBusy; private set => Set(ref _isBusy, value); }
+
+    // ---- Input -------------------------------------------------------------------------------
+    private string _input = "";
+    public string InputText
+    {
+        get => _input;
+        set { if (Set(ref _input, value ?? "")) OnPropertyChanged(nameof(IsSendActive)); }
+    }
+
+    private Screenshot? _attachment;
+    public Screenshot? Attachment
+    {
+        get => _attachment;
+        private set
+        {
+            if (!Set(ref _attachment, value)) return;
+            OnPropertyChanged(nameof(HasAttachment));
+            OnPropertyChanged(nameof(AttachmentThumb));
+            OnPropertyChanged(nameof(IsSendActive));
+        }
+    }
+    public bool HasAttachment => Attachment != null;
+    public BitmapSource? AttachmentThumb => Attachment?.Thumbnail;
+
+    /// <summary>Send looks active with text or a screenshot; otherwise it's dimmed and ignores clicks.</summary>
+    public bool IsSendActive => !IsBusy && (!string.IsNullOrWhiteSpace(InputText) || HasAttachment);
+
+    public void Attach(Screenshot shot) => Attachment = shot;
+
+    // ---- What's on screen for the current turn ---------------------------------------------------
+    private string _question = "";
+    public string Question { get => _question; private set => Set(ref _question, value); }
+
+    private BitmapSource? _questionThumb;
+    public BitmapSource? QuestionThumb
+    {
+        get => _questionThumb;
+        private set { if (Set(ref _questionThumb, value)) OnPropertyChanged(nameof(HasQuestionThumb)); }
+    }
+    public bool HasQuestionThumb => QuestionThumb != null;
+
+    public string AnswerText => _answer.ToString();
+
+    private string _error = "";
+    public string ErrorText { get => _error; private set => Set(ref _error, value); }
+
+    private ClaudeErrorKind _errorKind;
+    public ClaudeErrorKind ErrorKind
+    {
+        get => _errorKind;
+        private set { if (Set(ref _errorKind, value)) OnPropertyChanged(nameof(ShowSettingsButton)); }
+    }
+    public bool ShowSettingsButton => ErrorKind is ClaudeErrorKind.NoKey or ClaudeErrorKind.InvalidKey;
+
+    // ---- Conversation turns (what the answer view shows) -----------------------------------------
+    /// <summary>Every question/answer pair of this conversation, oldest first (memory only).</summary>
+    public System.Collections.ObjectModel.ObservableCollection<TurnViewModel> Turns { get; } = new();
+    private TurnViewModel? Current => Turns.Count > 0 ? Turns[^1] : null;
+
+    // Streamed text is pushed to the turn on a short throttle, so the Markdown re-renders smoothly.
+    private DispatcherTimer? _flushTimer;
+    private void ScheduleFlush()
+    {
+        _flushTimer ??= new DispatcherTimer(TimeSpan.FromMilliseconds(Motion.StreamRenderMs), DispatcherPriority.Render, (_, _) => Flush(), _ui);
+        if (!_flushTimer.IsEnabled) _flushTimer.Start();
+    }
+    private void Flush()
+    {
+        _flushTimer?.Stop();
+        if (Current is { } t) t.Answer = _answer.ToString();
+        OnPropertyChanged(nameof(AnswerText));
+        AnswerChanged?.Invoke();
+    }
+
+    // ---- Actions -------------------------------------------------------------------------------
+    private void Send()
+    {
+        if (!IsSendActive) return; // dimmed: ignore the click
+        string text = InputText.Trim();
+        var shot = Attachment;
+        if (text.Length == 0 && shot != null) text = AppConfig.DefaultScreenQuestion;
+
+        _history.Add(new ChatMessage("user", text, shot?.Base64Jpeg));
+        Question = text;
+        QuestionThumb = shot?.Thumbnail;
+        foreach (var old in Turns) old.IsLatest = false;
+        Turns.Add(new TurnViewModel(text, shot?.Thumbnail));
+        InputText = "";
+        Attachment = null;
+        _ = RunAsync();
+    }
+
+    private void Retry()
+    {
+        if (IsBusy || _history.Count == 0 || _history[^1].Role != "user") return;
+        _ = RunAsync();
+    }
+
+    private async Task RunAsync()
+    {
+        _cts?.Cancel();
+        var cts = _cts = new CancellationTokenSource();
+        var turn = Current;
+        _answer.Clear();
+        turn?.Start();
+        Flush();
+        IsBusy = true;
+        OnPropertyChanged(nameof(IsSendActive));
+        State = AskState.Thinking;
+
+        var snapshot = _history.ToList();
+        try
+        {
+            await Task.Run(() => _claude.StreamAsync(snapshot, delta =>
+                _ui.InvokeAsync(() =>
+                {
+                    if (cts.IsCancellationRequested) return;
+                    _answer.Append(delta);
+                    if (State == AskState.Thinking) State = AskState.Answer;
+                    turn?.MarkStreaming();
+                    ScheduleFlush();
+                }), cts.Token), cts.Token);
+
+            // Let any queued deltas land before closing the turn.
+            await _ui.InvokeAsync(() => { }, DispatcherPriority.Background);
+            if (cts.IsCancellationRequested) return;
+            Flush();
+            _history.Add(new ChatMessage("assistant", _answer.ToString()));
+            turn?.Finish();
+            State = AskState.Answer;
+        }
+        catch (OperationCanceledException)
+        {
+            // Stop / new chat / collapse: handled by whoever cancelled.
+        }
+        catch (ClaudeException ex)
+        {
+            if (cts.IsCancellationRequested) return;
+            ShowError(turn, ex.Kind, ex.Message);
+        }
+        catch (Exception)
+        {
+            if (cts.IsCancellationRequested) return;
+            ShowError(turn, ClaudeErrorKind.Other, "Something went wrong talking to Claude. Try again.");
+        }
+        finally
+        {
+            if (ReferenceEquals(_cts, cts))
+            {
+                IsBusy = false;
+                OnPropertyChanged(nameof(IsSendActive));
+                _cts = null;
+            }
+            cts.Dispose();
+        }
+    }
+
+    private void ShowError(TurnViewModel? turn, ClaudeErrorKind kind, string message)
+    {
+        _answer.Clear();
+        Flush();
+        ErrorKind = kind;
+        ErrorText = message;
+        turn?.Fail(message, kind is ClaudeErrorKind.NoKey or ClaudeErrorKind.InvalidKey);
+        State = AskState.Error;
+    }
+
+    /// <summary>Stop button: keep whatever arrived, or take the question back into the box.</summary>
+    private void Stop()
+    {
+        if (!IsBusy) return;
+        _cts?.Cancel();
+        IsBusy = false;
+        OnPropertyChanged(nameof(IsSendActive));
+        if (_answer.Length > 0)
+        {
+            Flush();
+            _history.Add(new ChatMessage("assistant", _answer.ToString()));
+            Current?.Finish();
+            State = AskState.Answer;
+            return;
+        }
+        if (_history.Count > 0 && _history[^1].Role == "user") _history.RemoveAt(_history.Count - 1);
+        if (Current is { } last) Turns.Remove(last);
+        if (Current is { } previous) previous.IsLatest = true;
+        InputText = Question == AppConfig.DefaultScreenQuestion ? "" : Question;
+        State = Turns.Count > 0 ? AskState.Answer : AskState.Idle;
+    }
+
+    /// <summary>Cancels an in-flight request (used when the notch collapses).</summary>
+    public void CancelIfBusy()
+    {
+        if (IsBusy) Stop();
+    }
+
+    private void NewChat()
+    {
+        _cts?.Cancel();
+        IsBusy = false;
+        _history.Clear();
+        _answer.Clear();
+        Turns.Clear();
+        Question = "";
+        QuestionThumb = null;
+        InputText = "";
+        Attachment = null;
+        ErrorText = "";
+        OnPropertyChanged(nameof(AnswerText));
+        AnswerChanged?.Invoke();
+        State = AskState.Idle;
+        OnPropertyChanged(nameof(HasConversation));
+        OnPropertyChanged(nameof(IsSendActive));
+    }
+
+    private void CopyAnswer()
+    {
+        var text = AnswerText;
+        if (string.IsNullOrEmpty(text)) return;
+        try { Clipboard.SetText(text); CopiedFlash?.Invoke(); } catch { /* clipboard busy */ }
+    }
+
+    /// <summary>Raised after Copy so the view can show a quick confirmation.</summary>
+    public event Action? CopiedFlash;
+}
+
+public enum TurnState { Thinking, Streaming, Done, Error }
+
+/// <summary>One exchange: the question block (with its screenshot) and Claude's answer block.</summary>
+public sealed class TurnViewModel : ObservableObject
+{
+    public TurnViewModel(string question, BitmapSource? thumb)
+    {
+        Question = question;
+        Thumb = thumb;
+    }
+
+    public string Question { get; }
+    public BitmapSource? Thumb { get; }
+    public bool HasThumb => Thumb != null;
+
+    private string _answer = "";
+    public string Answer { get => _answer; set => Set(ref _answer, value); }
+
+    private TurnState _state = TurnState.Thinking;
+    public TurnState State
+    {
+        get => _state;
+        private set
+        {
+            if (!Set(ref _state, value)) return;
+            OnPropertyChanged(nameof(IsThinking));
+            OnPropertyChanged(nameof(IsStreaming));
+            OnPropertyChanged(nameof(HasAnswer));
+            OnPropertyChanged(nameof(IsError));
+        }
+    }
+    public bool IsThinking => State == TurnState.Thinking;
+    public bool IsStreaming => State == TurnState.Streaming;
+    public bool HasAnswer => State is TurnState.Streaming or TurnState.Done;
+    public bool IsError => State == TurnState.Error;
+
+    private string _error = "";
+    public string ErrorText { get => _error; private set => Set(ref _error, value); }
+
+    private bool _showSettings;
+    public bool ShowSettingsButton { get => _showSettings; private set => Set(ref _showSettings, value); }
+
+    /// <summary>Older turns are dimmed a little so the newest exchange stands out.</summary>
+    private bool _isLatest = true;
+    public bool IsLatest { get => _isLatest; set => Set(ref _isLatest, value); }
+
+    internal void Start() { Answer = ""; ErrorText = ""; State = TurnState.Thinking; }
+    internal void MarkStreaming() { if (State == TurnState.Thinking) State = TurnState.Streaming; }
+    internal void Finish() => State = TurnState.Done;
+    internal void Fail(string message, bool keyProblem)
+    {
+        ErrorText = message;
+        ShowSettingsButton = keyProblem;
+        State = TurnState.Error;
+    }
+}

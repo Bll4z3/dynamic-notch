@@ -1,0 +1,90 @@
+<Window x:Class="DynamicNotch.NotchWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="using:DynamicNotch.Views"
+        Title="Dynamic Notch">
+
+    <!-- Sizes, margins and fonts come from Theme.cs (set in code-behind). Only elements with a
+         background take the mouse; the window region keeps the rest of the window click-through. -->
+    <Grid x:Name="Root" HorizontalAlignment="Left" VerticalAlignment="Top" Background="Transparent">
+        <Grid x:Name="NotchRoot"
+              PointerEntered="Notch_PointerEntered" PointerExited="Notch_PointerExited" PointerMoved="Notch_PointerMoved"
+>
+
+            <!-- Hover targets: the notch body (target size of the current state) and a thin strip
+                 along the top edge so the minimal (6px) notch is easy to reach. -->
+            <Border x:Name="HitStrip" VerticalAlignment="Top" HorizontalAlignment="Center" Background="Transparent" />
+            <Border x:Name="HitBody" VerticalAlignment="Top" HorizontalAlignment="Center" Background="Transparent" />
+
+            <!-- The notch body: drawn by the compositor (Views/NotchShape). -->
+            <Border x:Name="ShapeHost" IsHitTestVisible="False" />
+
+            <!-- Everything on the notch, clipped to the animated body shape by the compositor. -->
+            <Grid x:Name="ContentRoot">
+
+                <!-- ===== Collapsed: battery ring (left edge) · time (true centre) · art + bars (right edge) =====
+                     Fixed width; the side groups follow the body edges with compositor transforms. -->
+                <Grid x:Name="CollapsedLayer" VerticalAlignment="Top" HorizontalAlignment="Center" IsHitTestVisible="False">
+                    <v:BatteryRing x:Name="NotchRing" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                   Percent="{x:Bind Vm.Status.BatteryPercent, Mode=OneWay}"
+                                   IsCharging="{x:Bind Vm.Status.IsCharging, Mode=OneWay}"
+                                   Visibility="{x:Bind Vm.Status.HasBattery, Mode=OneWay}" />
+                    <v:CrossfadeText x:Name="CollapsedTime" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                     Text="{x:Bind Vm.Status.TimeText, Mode=OneWay}" />
+                    <StackPanel x:Name="CollapsedRight" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <StackPanel x:Name="CollapsedMusic" Orientation="Horizontal" Visibility="Collapsed">
+                            <v:Visualizer x:Name="Bars" VerticalAlignment="Center" />
+                            <Border x:Name="MiniArt">
+                                <Grid>
+                                    <v:VectorIcon x:Name="MiniArtIcon" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    <Border x:Name="MiniArtImage">
+                                        <Border.Background>
+                                            <ImageBrush x:Name="MiniArtBrush" Stretch="UniformToFill" />
+                                        </Border.Background>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===== Pill: transient notification ===== -->
+                <Grid x:Name="PillLayer" VerticalAlignment="Top" HorizontalAlignment="Center" Background="Transparent"
+                      IsHitTestVisible="False"
+                      PointerEntered="Pill_PointerEntered" PointerExited="Pill_PointerExited" Tapped="Pill_Tapped">
+                    <Grid x:Name="PillContent">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition x:Name="PillGapColumn" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <!-- System events: vector icon in a rounded tile; apps: the sender's logo in the same tile. -->
+                        <Border x:Name="PillIconBox" VerticalAlignment="Center" BorderThickness="1">
+                            <Grid>
+                                <v:VectorIcon x:Name="PillGlyph" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <Border x:Name="PillLogo" Margin="-1" Visibility="Collapsed">
+                                    <Border.Background>
+                                        <ImageBrush x:Name="PillLogoBrush" Stretch="UniformToFill" />
+                                    </Border.Background>
+                                </Border>
+                            </Grid>
+                        </Border>
+                        <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                            <TextBlock x:Name="PillApp" Style="{StaticResource PillAppText}" />
+                            <TextBlock x:Name="PillTitle" Style="{StaticResource PillTitleText}" />
+                            <TextBlock x:Name="PillBody" Style="{StaticResource PillBodyText}" />
+                        </StackPanel>
+                        <Border x:Name="PillBadge" Grid.Column="3" VerticalAlignment="Center" Padding="10,4"
+                                Background="{StaticResource CardHoverBrush}">
+                            <TextBlock x:Name="PillBadgeText" Style="{StaticResource BadgeText}" />
+                        </Border>
+                    </Grid>
+                </Grid>
+
+                <!-- ===== Expanded: header · pages · footer arrive in porting stage 2 ===== -->
+                <Grid x:Name="ExpandedLayer" VerticalAlignment="Top" HorizontalAlignment="Center" IsHitTestVisible="False" />
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

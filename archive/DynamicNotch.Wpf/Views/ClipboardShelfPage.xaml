@@ -1,0 +1,171 @@
+<UserControl x:Class="DynamicNotch.Views.ClipboardShelfPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="clr-namespace:DynamicNotch.Design"
+             xmlns:v="clr-namespace:DynamicNotch.Views"
+             xmlns:a="clr-namespace:DynamicNotch.Animation">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="{x:Static d:Theme.GapS3}" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- ================= Clipboard ================= -->
+        <Border x:Name="ClipCard" Grid.Column="0" Style="{StaticResource Card}" DataContext="{Binding Clipboard}" a:Stagger.Order="1">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="{x:Static d:Theme.CardHeaderMargin}" Height="{x:Static d:Theme.CardHeaderHeight}">
+                    <v:VectorIcon Data="{x:Static d:Icons.Clipboard}" Size="{x:Static d:Theme.IconSmall}" Foreground="{x:Static d:Theme.SecondaryText}" />
+                    <TextBlock Style="{StaticResource SectionText}" Text="Clipboard" Margin="{x:Static d:Theme.GapLeftS2}" />
+                </StackPanel>
+                <Grid>
+                    <TextBlock Style="{StaticResource CaptionText}" Text="Copy something and it shows up here"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}}" />
+                    <!-- Dense tile grid. No ScrollViewer: it would clip tiles as they zoom on hover. -->
+                    <ItemsControl x:Name="ClipGrid" ItemsSource="{Binding Items}" ClipToBounds="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border x:Name="Tile" Width="{x:Static d:Theme.ClipTileSize}" Height="{x:Static d:Theme.ClipTileSize}"
+                                        Margin="{x:Static d:Theme.ClipTileMargin}" Cursor="Hand"
+                                        CornerRadius="{x:Static d:Theme.RadiusSmall}" Background="{x:Static d:Theme.TileBrush}"
+                                        BorderBrush="{x:Static d:Theme.TileBorderBrush}" BorderThickness="1"
+                                        a:MotionBehaviors.AnimateIn="True"
+                                        a:MotionBehaviors.Leaving="{Binding IsLeaving}"
+                                        PreviewMouseLeftButtonDown="Clip_MouseDown"
+                                        MouseMove="Clip_MouseMove"
+                                        MouseLeftButtonUp="Clip_MouseUp"
+                                        MouseEnter="Tile_MouseEnter"
+                                        MouseLeave="Tile_MouseLeave">
+                                    <Grid ClipToBounds="True">
+                                        <!-- Image: the whole picture, letterboxed inside the tile -->
+                                        <Border Margin="{x:Static d:Theme.ClipTileInsetMargin}"
+                                                Visibility="{Binding IsImage, Converter={StaticResource BoolToVis}}">
+                                            <Border.Background>
+                                                <ImageBrush ImageSource="{Binding Image}" Stretch="{Binding ImageStretch}" />
+                                            </Border.Background>
+                                        </Border>
+                                        <!-- Text: first characters clipped inside the tile -->
+                                        <TextBlock Text="{Binding Snippet}" Margin="{x:Static d:Theme.ClipSnippetMargin}"
+                                                   TextWrapping="Wrap" TextTrimming="None"
+                                                   FontFamily="{x:Static d:Theme.Font}" FontSize="{x:Static d:Theme.ClipSnippetFontSize}"
+                                                   LineHeight="{x:Static d:Theme.ClipSnippetLineHeight}" LineStackingStrategy="BlockLineHeight"
+                                                   Foreground="{x:Static d:Theme.SecondaryText}"
+                                                   Visibility="{Binding IsText, Converter={StaticResource BoolToVis}}" />
+                                        <!-- Link: icon -->
+                                        <v:VectorIcon Data="{x:Static d:Icons.Link}" Size="{x:Static d:Theme.IconMedium}"
+                                                      Foreground="{x:Static d:Theme.PrimaryText}"
+                                                      Visibility="{Binding IsLink, Converter={StaticResource BoolToVis}}" />
+
+                                        <!-- Pinned marker (hidden while hovering, when the action overlay shows) -->
+                                        <v:VectorIcon x:Name="PinMark" Data="{x:Static d:Icons.Unpin}" Size="9"
+                                                      Margin="0,0,7,6" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                      Foreground="{x:Static d:Theme.SecondaryText}"
+                                                      Visibility="{Binding IsPinned, Converter={StaticResource BoolToVis}}" />
+
+                                        <!-- Hover-only overlay actions -->
+                                        <Button x:Name="PinBtn" Style="{StaticResource OverlayButton}"
+                                                HorizontalAlignment="Left" VerticalAlignment="Top" Margin="{x:Static d:Theme.PadS1}" Visibility="Collapsed"
+                                                Content="{Binding PinGlyph}" Command="{Binding PinCommand}" ToolTip="Pin" />
+                                        <Button x:Name="DeleteBtn" Style="{StaticResource OverlayButton}"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="{x:Static d:Theme.PadS1}" Visibility="Collapsed"
+                                                Content="{x:Static d:Icons.Close}" Command="{Binding DeleteCommand}" ToolTip="Delete" />
+
+                                        <!-- "Copied" flash: a green outline, no text -->
+                                        <Border CornerRadius="{x:Static d:Theme.RadiusSmall}" BorderThickness="2" BorderBrush="{x:Static d:Theme.SuccessBrush}"
+                                                IsHitTestVisible="False"
+                                                Visibility="{Binding JustCopied, Converter={StaticResource BoolToVis}}" />
+                                    </Grid>
+                                </Border>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsImage}" Value="True">
+                                        <Setter TargetName="Tile" Property="Background" Value="{x:Static d:Theme.NotchBrush}" />
+                                    </DataTrigger>
+                                    <Trigger SourceName="Tile" Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="PinBtn" Property="Visibility" Value="Visible" />
+                                        <Setter TargetName="DeleteBtn" Property="Visibility" Value="Visible" />
+                                        <Setter TargetName="PinMark" Property="Visibility" Value="Collapsed" />
+                                    </Trigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </DockPanel>
+        </Border>
+
+        <!-- ================= Shelf ================= -->
+        <Border x:Name="ShelfCard" Grid.Column="2" Style="{StaticResource Card}" DataContext="{Binding Shelf}" AllowDrop="True"
+                a:Stagger.Order="2">
+            <DockPanel>
+                <Grid DockPanel.Dock="Top" Margin="{x:Static d:Theme.CardHeaderMargin}" Height="{x:Static d:Theme.CardHeaderHeight}">
+                    <StackPanel Orientation="Horizontal">
+                        <v:VectorIcon Data="{x:Static d:Icons.Shelf}" Size="{x:Static d:Theme.IconSmall}" Foreground="{x:Static d:Theme.SecondaryText}" />
+                        <TextBlock Style="{StaticResource SectionText}" Text="Shelf" Margin="{x:Static d:Theme.GapLeftS2}" />
+                    </StackPanel>
+                    <Button HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource TextButton}"
+                            Command="{Binding ClearAllCommand}" Content="Clear all" />
+                </Grid>
+                <Grid>
+                    <!-- Dashed drop zone: shown when empty, and over the tiles while a file is dragged in.
+                         The dashes march and brighten while something hovers (see SetDropActive). -->
+                    <Grid x:Name="DropZone" IsHitTestVisible="False" RenderTransformOrigin="0.5,0.5" Panel.ZIndex="1">
+                        <Border x:Name="DropFill" CornerRadius="{x:Static d:Theme.Radius}" Background="{x:Static d:Theme.CardBrush}" Opacity="0" />
+                        <Rectangle x:Name="DropOutline" RadiusX="{x:Static d:Theme.CornerRadius}" RadiusY="{x:Static d:Theme.CornerRadius}"
+                                   Stroke="{x:Static d:Theme.DropZoneBrush}" StrokeThickness="{x:Static d:Theme.DropZoneThickness}"
+                                   StrokeDashCap="Round" />
+                        <StackPanel x:Name="DropHint" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <v:VectorIcon x:Name="DropIcon" Data="{x:Static d:Icons.Upload}" Size="{x:Static d:Theme.IconMedium}"
+                                          Foreground="{x:Static d:Theme.SecondaryText}" RenderTransformOrigin="0.5,0.5" />
+                            <TextBlock Style="{StaticResource CaptionText}" Text="Drop files here" Margin="{x:Static d:Theme.GapTopS2}"
+                                       HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Grid>
+                    <ScrollViewer x:Name="ShelfScroll" Style="{StaticResource QuietScroll}">
+                        <ItemsControl ItemsSource="{Binding Items}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid x:Name="Tile" Width="{x:Static d:Theme.ShelfTileWidth}" Height="{x:Static d:Theme.ShelfTileHeight}"
+                                          Margin="{x:Static d:Theme.ClipTileMargin}" Cursor="Hand" Background="Transparent"
+                                          a:MotionBehaviors.AnimateIn="True"
+                                          a:MotionBehaviors.Leaving="{Binding IsLeaving}"
+                                          PreviewMouseLeftButtonDown="Shelf_MouseDown"
+                                          MouseMove="Shelf_MouseMove"
+                                          MouseLeftButtonUp="Shelf_MouseUp"
+                                          ToolTip="{Binding Path}">
+                                        <Border CornerRadius="{x:Static d:Theme.Radius}" Background="{x:Static d:Theme.CardHoverBrush}"
+                                                a:MotionBehaviors.HoverFade="True" />
+                                        <StackPanel x:Name="TileBody" Margin="{x:Static d:Theme.PadS1}" VerticalAlignment="Center"
+                                                    a:MotionBehaviors.PressScale="True">
+                                            <Image Source="{Binding Icon}" Width="{x:Static d:Theme.ShelfIconSize}" Height="{x:Static d:Theme.ShelfIconSize}" />
+                                            <TextBlock Style="{StaticResource BaseText}" Text="{Binding Name}" FontSize="{x:Static d:Theme.ShelfNameFontSize}"
+                                                       Foreground="{x:Static d:Theme.SecondaryText}"
+                                                       TextAlignment="Center" TextWrapping="Wrap" MaxHeight="26" Margin="{x:Static d:Theme.GapTopS1}" />
+                                        </StackPanel>
+                                        <Button x:Name="RemoveBtn" Style="{StaticResource OverlayButton}"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="{x:Static d:Theme.PadS1}" Visibility="Collapsed"
+                                                Content="{x:Static d:Icons.Close}" Command="{Binding RemoveCommand}" ToolTip="Remove from shelf" />
+                                    </Grid>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding Exists}" Value="False">
+                                            <Setter TargetName="TileBody" Property="Opacity" Value="0.35" />
+                                        </DataTrigger>
+                                        <Trigger SourceName="Tile" Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="RemoveBtn" Property="Visibility" Value="Visible" />
+                                        </Trigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

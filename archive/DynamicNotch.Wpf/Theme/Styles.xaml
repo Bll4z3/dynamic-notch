@@ -1,0 +1,361 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:d="clr-namespace:DynamicNotch.Design"
+                    xmlns:v="clr-namespace:DynamicNotch.Views"
+                    xmlns:a="clr-namespace:DynamicNotch.Animation">
+
+    <!-- Every value here comes from Theme.cs / Icons.cs (x:Static) so the design system stays in one place. -->
+
+    <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    <v:PillRadiusConverter x:Key="PillRadius" />
+
+    <!-- ===== Type scale: title (bold) / body / caption; tabular numerals for every time ===== -->
+    <Style x:Key="BaseText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{x:Static d:Theme.Font}" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontBody}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+        <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale" />
+    </Style>
+
+    <Style x:Key="TitleText" TargetType="TextBlock" BasedOn="{StaticResource BaseText}">
+        <Setter Property="FontFamily" Value="{x:Static d:Theme.DisplayFont}" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontTitle}" />
+        <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+
+    <Style x:Key="SecondaryText" TargetType="TextBlock" BasedOn="{StaticResource BaseText}">
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.SecondaryText}" />
+    </Style>
+
+    <Style x:Key="CaptionText" TargetType="TextBlock" BasedOn="{StaticResource BaseText}">
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontCaption}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.TertiaryText}" />
+    </Style>
+
+    <Style x:Key="SectionText" TargetType="TextBlock" BasedOn="{StaticResource CaptionText}">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.SecondaryText}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="TimeText" TargetType="TextBlock" BasedOn="{StaticResource BaseText}">
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontCaption}" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.SecondaryText}" />
+        <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+        <Setter Property="Typography.NumeralStyle" Value="Lining" />
+        <Setter Property="TextTrimming" Value="None" />
+    </Style>
+
+    <!-- Music elapsed/remaining: bold, +2pt, tabular. -->
+    <Style x:Key="MusicTimeText" TargetType="TextBlock" BasedOn="{StaticResource TimeText}">
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontMusicTime}" />
+    </Style>
+
+    <!-- Collapsed clock: bold, tabular. -->
+    <Style x:Key="ClockTimeText" TargetType="TextBlock" BasedOn="{StaticResource TimeText}">
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontClock}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- Expanded header: bold time, lighter date next to it. -->
+    <Style x:Key="HeaderTimeText" TargetType="TextBlock" BasedOn="{StaticResource ClockTimeText}">
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontHeaderClock}" />
+    </Style>
+    <Style x:Key="HeaderDateText" TargetType="TextBlock" BasedOn="{StaticResource BaseText}">
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontHeaderDate}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.SecondaryText}" />
+        <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+        <Setter Property="TextTrimming" Value="None" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- ===== Icon button: vector icon, round hover fill that springs in, press squash ===== -->
+    <Style x:Key="IconButton" TargetType="Button">
+        <Setter Property="a:MotionBehaviors.PressScale" Value="True" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Width" Value="{x:Static d:Theme.TransportButtonSize}" />
+        <Setter Property="Height" Value="{x:Static d:Theme.TransportButtonSize}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.IconMedium}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid Background="Transparent">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="{x:Static d:Theme.Radius}" />
+                        <Border Background="{x:Static d:Theme.CardHoverBrush}" CornerRadius="{x:Static d:Theme.Radius}"
+                                a:MotionBehaviors.HoverFade="True" />
+                        <v:VectorIcon Data="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
+                                      Size="{TemplateBinding FontSize}" Foreground="{TemplateBinding Foreground}" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.35" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="SmallIconButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+        <Setter Property="Width" Value="26" />
+        <Setter Property="Height" Value="26" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.IconSmall}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.SecondaryText}" />
+    </Style>
+
+    <!-- Hover-only overlay action on clipboard tiles (pin / delete): small radius, like the tiles. -->
+    <Style x:Key="OverlayButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+        <Setter Property="Width" Value="{x:Static d:Theme.OverlayButtonSize}" />
+        <Setter Property="Height" Value="{x:Static d:Theme.OverlayButtonSize}" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.OverlayIconSize}" />
+        <Setter Property="Background" Value="{x:Static d:Theme.OverlayButtonBrush}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid Background="Transparent">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="{x:Static d:Theme.RadiusSmall}" />
+                        <Border Background="{x:Static d:Theme.CardHoverBrush}" CornerRadius="{x:Static d:Theme.RadiusSmall}"
+                                a:MotionBehaviors.HoverFade="True" />
+                        <v:VectorIcon Data="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
+                                      Size="{TemplateBinding FontSize}" Foreground="{TemplateBinding Foreground}" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Text button (e.g. "Clear all", notification prompt): capsule with springy hover fill. -->
+    <Style x:Key="TextButton" TargetType="Button">
+        <Setter Property="a:MotionBehaviors.PressScale" Value="True" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.SecondaryText}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Height" Value="22" />
+        <Setter Property="FontFamily" Value="{x:Static d:Theme.Font}" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontCaption}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid Background="Transparent">
+                        <Border Background="{x:Static d:Theme.CardHoverBrush}" CornerRadius="{Binding ActualHeight, RelativeSource={RelativeSource Self}, Converter={StaticResource PillRadius}}"
+                                a:MotionBehaviors.HoverFade="True" />
+                        <ContentPresenter Margin="10,0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"
+                                          TextElement.FontFamily="{TemplateBinding FontFamily}"
+                                          TextElement.FontSize="{TemplateBinding FontSize}" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Card: near-black panel with a hairline border. -->
+    <Style x:Key="Card" TargetType="Border">
+        <Setter Property="Background" Value="{x:Static d:Theme.CardBrush}" />
+        <Setter Property="BorderBrush" Value="{x:Static d:Theme.CardBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{x:Static d:Theme.Radius}" />
+        <Setter Property="Padding" Value="{x:Static d:Theme.CardPadding}" />
+    </Style>
+
+    <!-- Invisible scrollbars: lists stay clean. -->
+    <Style x:Key="QuietScroll" TargetType="ScrollViewer">
+        <Setter Property="VerticalScrollBarVisibility" Value="Hidden" />
+        <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+        <Setter Property="PanningMode" Value="VerticalOnly" />
+    </Style>
+    <!-- ===== Ask / Settings controls ===== -->
+
+    <!-- Rounded text box with a placeholder (Tag). Used by Ask and Settings. -->
+    <Style x:Key="AskInput" TargetType="TextBox">
+        <Setter Property="FontFamily" Value="{x:Static d:Theme.Font}" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontBody}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="CaretBrush" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="SelectionBrush" Value="{x:Static d:Theme.AccentBrush}" />
+        <Setter Property="Background" Value="{x:Static d:Theme.InputBrush}" />
+        <Setter Property="BorderBrush" Value="{x:Static d:Theme.TileBorderBrush}" />
+        <Setter Property="Padding" Value="{x:Static d:Theme.AskInputPadding}" />
+        <Setter Property="MinHeight" Value="{x:Static d:Theme.AskInputMinHeight}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="AcceptsReturn" Value="True" />
+        <Setter Property="AcceptsTab" Value="False" />
+        <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+        <Setter Property="MaxHeight" Value="{x:Static d:Theme.AskInputMaxHeight}" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="1" CornerRadius="{x:Static d:Theme.Radius}">
+                        <Grid Margin="{TemplateBinding Padding}">
+                            <TextBlock x:Name="Placeholder" Text="{TemplateBinding Tag}" Foreground="{x:Static d:Theme.TertiaryText}"
+                                       FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}"
+                                       VerticalAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed" Margin="2,0,0,0"
+                                       TextTrimming="CharacterEllipsis" />
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" VerticalAlignment="Center"
+                                          Style="{DynamicResource ThinScroll}" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Text" Value="">
+                            <Setter TargetName="Placeholder" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{x:Static d:Theme.DropZoneBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Masked key box, styled like AskInput. -->
+    <Style x:Key="KeyInput" TargetType="PasswordBox">
+        <Setter Property="FontFamily" Value="{x:Static d:Theme.MonoFont}" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontBody}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="CaretBrush" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="SelectionBrush" Value="{x:Static d:Theme.AccentBrush}" />
+        <Setter Property="Background" Value="{x:Static d:Theme.InputBrush}" />
+        <Setter Property="BorderBrush" Value="{x:Static d:Theme.TileBorderBrush}" />
+        <Setter Property="Padding" Value="{x:Static d:Theme.AskInputPadding}" />
+        <Setter Property="Height" Value="{x:Static d:Theme.SettingsFieldHeight}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="PasswordBox">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="1" CornerRadius="{x:Static d:Theme.Radius}">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center" Focusable="False"
+                                      HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{x:Static d:Theme.DropZoneBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- White pill with black text and an optional icon (Tag = icon data). Fully round ends (radius =
+         height / 2 from the converter), 32px tall, 15px side padding, 6px icon gap, hover lighten, press spring. -->
+    <Style x:Key="PillButton" TargetType="Button">
+        <Setter Property="a:MotionBehaviors.PressScale" Value="True" />
+        <Setter Property="Background" Value="{x:Static d:Theme.PillButtonBrush}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.PillButtonTextBrush}" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Height" Value="{x:Static d:Theme.PillButtonHeight}" />
+        <Setter Property="Padding" Value="{x:Static d:Theme.PillButtonPadding}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="FontFamily" Value="{x:Static d:Theme.Font}" />
+        <Setter Property="FontSize" Value="{x:Static d:Theme.FontBody}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid x:Name="Root">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{Binding ActualHeight, RelativeSource={RelativeSource Self}, Converter={StaticResource PillRadius}}" />
+                        <Border Background="{x:Static d:Theme.PillLightenBrush}" a:MotionBehaviors.HoverFade="True"
+                                CornerRadius="{Binding ActualHeight, RelativeSource={RelativeSource Self}, Converter={StaticResource PillRadius}}" />
+                        <StackPanel Orientation="Horizontal" Margin="{TemplateBinding Padding}" VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <v:VectorIcon x:Name="Icon" Data="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Size="{x:Static d:Theme.IconSmall}" Foreground="{TemplateBinding Foreground}"
+                                          Margin="{x:Static d:Theme.PillIconMargin}" />
+                            <ContentPresenter VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"
+                                              TextElement.FontFamily="{TemplateBinding FontFamily}"
+                                              TextElement.FontSize="{TemplateBinding FontSize}"
+                                              TextElement.FontWeight="{TemplateBinding FontWeight}" />
+                        </StackPanel>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Tag" Value="{x:Null}">
+                            <Setter TargetName="Icon" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Root" Property="Opacity" Value="0.4" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Quiet dark pill with white text and the 1px ~8% white border (Select area, New chat, Settings actions). -->
+    <Style x:Key="QuietPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+        <Setter Property="Background" Value="{x:Static d:Theme.QuietPillBrush}" />
+        <Setter Property="Foreground" Value="{x:Static d:Theme.PrimaryText}" />
+        <Setter Property="BorderBrush" Value="{x:Static d:Theme.HighlightBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style x:Key="SecondaryPillButton" TargetType="Button" BasedOn="{StaticResource QuietPillButton}" />
+
+    <!-- Thin custom scrollbar: a 3px rounded thumb, no arrows, no track. -->
+    <Style x:Key="ThinScrollBar" TargetType="ScrollBar">
+        <Setter Property="Width" Value="{x:Static d:Theme.ScrollbarWidth}" />
+        <Setter Property="MinWidth" Value="{x:Static d:Theme.ScrollbarWidth}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollBar">
+                    <Track x:Name="PART_Track" IsDirectionReversed="True">
+                        <Track.Thumb>
+                            <Thumb>
+                                <Thumb.Template>
+                                    <ControlTemplate TargetType="Thumb">
+                                        <Border Background="{x:Static d:Theme.DropZoneBrush}" CornerRadius="{x:Static d:Theme.Radius}" />
+                                    </ControlTemplate>
+                                </Thumb.Template>
+                            </Thumb>
+                        </Track.Thumb>
+                    </Track>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="ThinScroll" TargetType="ScrollViewer">
+        <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+        <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollViewer">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ScrollContentPresenter Grid.Column="0" CanContentScroll="{TemplateBinding CanContentScroll}" />
+                        <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Column="1" Style="{StaticResource ThinScrollBar}" Margin="4,2,0,2"
+                                   Orientation="Vertical" Maximum="{TemplateBinding ScrollableHeight}"
+                                   ViewportSize="{TemplateBinding ViewportHeight}"
+                                   Value="{TemplateBinding VerticalOffset}"
+                                   Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

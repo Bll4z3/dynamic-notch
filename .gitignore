@@ -1,0 +1,13 @@
+bin/
+obj/
+artifacts/
+*.user
+.vs/
+
+# Secrets: never commit keys or certificates
+.env
+.env.*
+*.key
+*.pfx
+*.snk
+claude.key
