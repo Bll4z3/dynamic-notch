@@ -13,7 +13,7 @@
 
   <Identity Name="DynamicNotch"
             Publisher="CN=DynamicNotch Dev"
-            Version="2.1.0.1"
+            Version="2.10.0.0"
             ProcessorArchitecture="__ARCH__" />
 
   <Properties>

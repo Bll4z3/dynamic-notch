@@ -27,7 +27,7 @@
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <AssemblyName>DynamicNotch</AssemblyName>
     <RootNamespace>DynamicNotch</RootNamespace>
-    <Version>2.1.0</Version>
+    <Version>2.10.0</Version>
     <!-- Program.cs owns Main (single-instance check before XAML starts). -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
