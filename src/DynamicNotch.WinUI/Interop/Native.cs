@@ -54,6 +54,13 @@ internal static class Native
         SendMessage(hwnd, 0x00A1 /* WM_NCLBUTTONDOWN */, new IntPtr(2) /* HTCAPTION */, IntPtr.Zero);
     }
 
+    /// <summary>Starts a system resize from the bottom-right corner (the Settings window's grip).</summary>
+    public static void BeginWindowResize(IntPtr hwnd)
+    {
+        ReleaseCapture();
+        SendMessage(hwnd, 0x00A1 /* WM_NCLBUTTONDOWN */, new IntPtr(17) /* HTBOTTOMRIGHT */, IntPtr.Zero);
+    }
+
     // ---- Keeping the app's own windows out of screenshots ---------------------------------------------
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint affinity);
     [DllImport("dwmapi.dll")] private static extern int DwmFlush();
@@ -150,9 +157,15 @@ internal static class Native
     [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
 
     /// <summary>Bounds (physical pixels) and scale factor of the primary monitor.</summary>
-    public static (RECT bounds, double scale) GetPrimaryMonitor()
+    public static (RECT bounds, double scale) GetPrimaryMonitor() => GetMonitor(new POINT { X = 0, Y = 0 });
+
+    /// <summary>The monitor under the mouse pointer (Settings ▸ Customisation ▸ Behaviour ▸ Monitor).</summary>
+    public static (RECT bounds, double scale) GetMonitorUnderCursor() =>
+        GetCursorPos(out var pt) ? GetMonitor(pt, nearest: true) : GetPrimaryMonitor();
+
+    private static (RECT bounds, double scale) GetMonitor(POINT at, bool nearest = false)
     {
-        var hmon = MonitorFromPoint(new POINT { X = 0, Y = 0 }, 1 /* MONITOR_DEFAULTTOPRIMARY */);
+        var hmon = MonitorFromPoint(at, nearest ? 2u /* MONITOR_DEFAULTTONEAREST */ : 1u /* MONITOR_DEFAULTTOPRIMARY */);
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
         GetMonitorInfo(hmon, ref mi);
         double scale = 1;

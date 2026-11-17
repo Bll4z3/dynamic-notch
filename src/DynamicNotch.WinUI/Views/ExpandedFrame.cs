@@ -55,7 +55,7 @@ public sealed class ExpandedFrame : Grid
 
         // ---- Header: battery ring + bold time (shared with the collapsed notch) + lighter date · settings ----
         var left = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
-        HeaderRing = new BatteryRing { RingSize = Theme.HeaderRingSize, Thickness = Theme.HeaderRingThickness, Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center };
+        HeaderRing = new BatteryRing { RingSize = Theme.HeaderRingSize, Thickness = Theme.HeaderRingThickness, Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center, GreenWhileCharging = true };
         HeaderTime = new CrossfadeText { VerticalAlignment = VerticalAlignment.Center };
         HeaderTime.SetStyle(t => t.Style = (Style)Application.Current.Resources["HeaderTimeText"]);
         _date.SetStyle(t => t.Style = (Style)Application.Current.Resources["HeaderDateText"]);
@@ -111,6 +111,8 @@ public sealed class ExpandedFrame : Grid
         _pageViews[PageId.Clipboard] = Shelf;
         Usage = new UsagePage(vm.Usage);
         _pageViews[PageId.Usage] = Usage;
+        Hub = new HubPage(vm.Hub);
+        _pageViews[PageId.Hub] = Hub;
         FocusTimer = new FocusPage(vm.Focus);
         _pageViews[PageId.Focus] = FocusTimer;
         // Ask keeps its slot in the strip (so page indices line up) but draws on its own full-width layer
@@ -137,6 +139,7 @@ public sealed class ExpandedFrame : Grid
         foreach (var (el, order) in Shelf.StaggerBlocks) Stagger.Add(el, order);
         foreach (var (el, order) in Usage.StaggerBlocks) Stagger.Add(el, order);
         foreach (var (el, order) in FocusTimer.StaggerBlocks) Stagger.Add(el, order);
+        foreach (var (el, order) in Hub.StaggerBlocks) Stagger.Add(el, order);
         foreach (var (el, order) in Ask.StaggerBlocks) Stagger.Add(el, order);
         Stagger.Add(_footerInner, 5);
 
@@ -158,6 +161,7 @@ public sealed class ExpandedFrame : Grid
     public ClipboardShelfPage Shelf { get; }
     public UsagePage Usage { get; }
     public FocusPage FocusTimer { get; }
+    public HubPage Hub { get; }
     public AskPage Ask { get; }
 
     /// <summary>
@@ -181,7 +185,7 @@ public sealed class ExpandedFrame : Grid
     {
         _strip.Children.Clear();
         foreach (var id in _vm.Pages.Enabled) _strip.Children.Add(_pageViews[id]);
-        var enabled = PageRegistry.All.Where(p => _vm.Pages.IsEnabled(p.Id)).ToList();
+        var enabled = _vm.Pages.Ordered.Where(p => _vm.Pages.IsEnabled(p.Id)).ToList();
         Navigator.SetPages(enabled);
         Ask.Dots.SetPages(enabled);
         int ask = _vm.Pages.IndexOf(PageId.Ask);

@@ -27,6 +27,8 @@ public sealed class BatteryRing : Grid
     private readonly VectorIcon _glyph = new();
     private readonly TextBlock _number = new();
     private readonly SolidColorBrush _boltBrush = new(Theme.BatteryGreen);
+    private readonly Microsoft.UI.Xaml.Shapes.Ellipse _halo = new();
+    private bool _haloOn;
 
     private ShapeVisual? _shapes;
     private CompositionColorBrush? _arcBrush;
@@ -54,6 +56,18 @@ public sealed class BatteryRing : Grid
         _number.TextAlignment = TextAlignment.Center;
         _number.IsHitTestVisible = false;
 
+        // Charging halo (the notch's own battery only): a soft green glow that breathes on the compositor.
+        _halo.Fill = new RadialGradientBrush
+        {
+            GradientStops =
+            {
+                new GradientStop { Color = Color.FromArgb(0xC0, Theme.ChargingColor.R, Theme.ChargingColor.G, Theme.ChargingColor.B), Offset = 0 },
+                new GradientStop { Color = Color.FromArgb(0, Theme.ChargingColor.R, Theme.ChargingColor.G, Theme.ChargingColor.B), Offset = 1 },
+            },
+        };
+        _halo.IsHitTestVisible = false;
+        _halo.Visibility = Visibility.Collapsed;
+        Children.Add(_halo);
         Children.Add(_ringHost);
         Children.Add(_glyph);
         Children.Add(_number);
@@ -71,7 +85,7 @@ public sealed class BatteryRing : Grid
     public double Thickness { get => _thickness; set => _thickness = value; }
 
     public double Percent { get => _percent; set { if (value == _percent) return; _percent = value; OnPercentChanged(); } }
-    public bool IsCharging { get => _charging; set { if (value == _charging) return; _charging = value; UpdateGlyph(); } }
+    public bool IsCharging { get => _charging; set { if (value == _charging) return; _charging = value; ApplyColor(Motion.ChargeColorMs); } }
     public string? Glyph { get => _deviceGlyph; set { _deviceGlyph = value; UpdateGlyph(); } }
     /// <summary>When true, hovering the ring itself toggles <see cref="ShowNumber"/>.</summary>
     public bool NumberOnHover { get; set; }
@@ -146,24 +160,40 @@ public sealed class BatteryRing : Grid
         if (!HasValue) { UpdateGlyph(); return; }
         _fill!.SetTarget(Math.Clamp(_percent, 0, 100) / 100.0, Motion.RingFill);
 
-        var target = Theme.BatteryColor(_percent);
+        ApplyColor(Motion.RingColorMs);
+    }
+
+    /// <summary>Level colour, or green while charging for the notch's own battery (<see cref="GreenWhileCharging"/>).</summary>
+    private Color TargetColor => GreenWhileCharging && _charging ? Theme.ChargingColor : Theme.BatteryColor(_percent);
+
+    private void ApplyColor(int ms)
+    {
+        if (_arcBrush == null || !HasValue) { UpdateGlyph(); return; }
+        var target = TargetColor;
         if (!_hadValue || !Anim.Enabled)
         {
             // First reading: start in the right colour (the fill still springs in from empty).
             _hadValue = true;
-            _arcBrush!.StopAnimation("Color");
+            _arcBrush.StopAnimation("Color");
             _arcBrush.Color = target;
         }
         else if (target != _color)
         {
-            var a = _arcBrush!.Compositor.CreateColorKeyFrameAnimation();
+            var a = _arcBrush.Compositor.CreateColorKeyFrameAnimation();
             a.InsertKeyFrame(1, target);
-            a.Duration = TimeSpan.FromMilliseconds(700);
+            a.Duration = TimeSpan.FromMilliseconds(ms);
             _arcBrush.StartAnimation("Color", a);
         }
         _color = target;
         UpdateGlyph();
     }
+
+    /// <summary>
+    /// The notch's own battery (collapsed ring and the expanded header): ring and bolt are always green while
+    /// the charger is connected, whatever the level, and cross-fade back to the level colours when unplugged.
+    /// Device rings leave this off.
+    /// </summary>
+    public bool GreenWhileCharging { get; set; }
 
     private void UpdateGlyph()
     {
@@ -173,5 +203,38 @@ public sealed class BatteryRing : Grid
         _glyph.Size = _size * (device ? 0.5 : 0.52);
         _glyph.Foreground = device ? Theme.PrimaryText : _boltBrush;
         _glyph.Data = data;
+        UpdateHalo(!device && _charging && HasValue && ChargeHalo);
+    }
+
+    /// <summary>Show the breathing charging halo while charging (the collapsed notch's ring).</summary>
+    public bool ChargeHalo { get; set; }
+
+    private void UpdateHalo(bool on)
+    {
+        if (on == _haloOn) return;
+        _haloOn = on;
+        double d = _size * Theme.ChargeHaloScale;
+        _halo.Width = _halo.Height = d;
+        _halo.Margin = new Thickness(-(d - _size) / 2);
+        _halo.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        var v = Anim.VisualOf(_halo);
+        v.CenterPoint = new Vector3((float)d / 2, (float)d / 2, 0);
+        if (!on) { v.StopAnimation("Opacity"); v.StopAnimation("Scale"); return; }
+        if (!Anim.Enabled) { v.Opacity = (float)Theme.ChargeHaloOpacity; return; }
+        var c = v.Compositor;
+        var op = c.CreateScalarKeyFrameAnimation();
+        op.InsertKeyFrame(0, 0.15f);
+        op.InsertKeyFrame(0.5f, (float)Theme.ChargeHaloOpacity);
+        op.InsertKeyFrame(1, 0.15f);
+        op.Duration = TimeSpan.FromSeconds(Motion.ChargePulsePeriod);
+        op.IterationBehavior = AnimationIterationBehavior.Forever;
+        var sc = c.CreateVector3KeyFrameAnimation();
+        sc.InsertKeyFrame(0, new Vector3(0.75f, 0.75f, 1));
+        sc.InsertKeyFrame(0.5f, new Vector3(1, 1, 1));
+        sc.InsertKeyFrame(1, new Vector3(0.75f, 0.75f, 1));
+        sc.Duration = op.Duration;
+        sc.IterationBehavior = AnimationIterationBehavior.Forever;
+        v.StartAnimation("Opacity", op);
+        v.StartAnimation("Scale", sc);
     }
 }

@@ -19,7 +19,8 @@ public sealed class KeyboardHookService : IDisposable
     private const int WH_KEYBOARD_LL = 13, WH_MOUSE_LL = 14;
     private const int WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_SYSKEYDOWN = 0x0104, WM_SYSKEYUP = 0x0105;
     private const int WM_LBUTTONDOWN = 0x0201, WM_RBUTTONDOWN = 0x0204, WM_MBUTTONDOWN = 0x0207;
-    private const int WM_QUIT = 0x0012, WM_APP_MOUSEHOOK = 0x8001;
+    private const int WM_QUIT = 0x0012, WM_APP_MOUSEHOOK = 0x8001, WM_APP_CAPS = 0x8002;
+    private const int VK_CAPITAL = 0x14;
     private const int VK_LEFT = 0x25, VK_RIGHT = 0x27, VK_SPACE = 0x20, VK_ESCAPE = 0x1B;
     private const int VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12, VK_LWIN = 0x5B, VK_RWIN = 0x5C;
 
@@ -34,6 +35,8 @@ public sealed class KeyboardHookService : IDisposable
     private volatile bool _arrowsActive, _playPauseActive, _escapeActive, _typing;
     private IntPtr _passThroughWindow; // e.g. the Settings window: never intercept while it is in front
     private volatile int _rectL, _rectT, _rectR, _rectB; // notch bounds in screen pixels (for outside clicks)
+    private bool _capsDown;      // hook thread only: ignore auto-repeat while Caps Lock is held
+    private int _capsState = -1; // last Caps Lock state reported (-1 = unknown)
 
     public KeyboardHookService(DispatcherQueue ui) => _ui = ui;
 
@@ -41,6 +44,8 @@ public sealed class KeyboardHookService : IDisposable
     public event Action<NotchKey>? KeyPressed;
     /// <summary>Raised on the UI thread when the user clicks outside the notch while it's pinned.</summary>
     public event Action? OutsideClick;
+    /// <summary>Raised on the UI thread after Caps Lock was toggled (true = on). Never at start-up.</summary>
+    public event Action<bool>? CapsLockChanged;
 
     public bool IsInstalled => _kbHook != IntPtr.Zero;
 
@@ -97,6 +102,12 @@ public sealed class KeyboardHookService : IDisposable
                     }
                     continue;
                 }
+                if (msg.message == WM_APP_CAPS)
+                {
+                    // Outside the hook callback: read the toggle a moment later on a worker, once it has applied.
+                    ThreadPool.QueueUserWorkItem(static s => ((KeyboardHookService)s!).ReadCapsLock(), this);
+                    continue;
+                }
                 TranslateMessage(ref msg);
                 DispatchMessage(ref msg);
             }
@@ -118,6 +129,14 @@ public sealed class KeyboardHookService : IDisposable
             int vk = Marshal.ReadInt32(lParam);           // KBDLLHOOKSTRUCT.vkCode
             bool down = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
             bool up = msg is WM_KEYUP or WM_SYSKEYUP;
+
+            // Caps Lock: only noted (never swallowed or delayed); the state is read off this thread.
+            if (vk == VK_CAPITAL)
+            {
+                if (down && !_capsDown) { _capsDown = true; PostThreadMessage(_threadId, WM_APP_CAPS, 0, IntPtr.Zero); }
+                else if (up) _capsDown = false;
+                return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
+            }
 
             if (up && vk is >= 0 and < 256 && _swallowedDown[vk])
             {
@@ -158,6 +177,17 @@ public sealed class KeyboardHookService : IDisposable
         return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
     }
 
+    private void ReadCapsLock()
+    {
+        Thread.Sleep(DynamicNotch.Design.Motion.CapsReadDelayMs);
+        int on = (GetKeyState(VK_CAPITAL) & 1) != 0 ? 1 : 0;
+        if (Interlocked.Exchange(ref _capsState, on) == on) return; // no actual change
+        _ui.TryEnqueue(() => CapsLockChanged?.Invoke(on == 1));
+    }
+
+    /// <summary>Records the start-up Caps Lock state, so only real changes raise <see cref="CapsLockChanged"/>.</summary>
+    public void PrimeCapsLock() => Interlocked.Exchange(ref _capsState, (GetKeyState(VK_CAPITAL) & 1) != 0 ? 1 : 0);
+
     private static bool ModifierHeld() =>
         (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 || (GetAsyncKeyState(VK_MENU) & 0x8000) != 0 ||
         (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0 ||
@@ -186,6 +216,7 @@ public sealed class KeyboardHookService : IDisposable
     [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref MSG msg);
     [DllImport("user32.dll")] private static extern bool PostThreadMessage(uint threadId, int msg, int wParam, IntPtr lParam);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")] private static extern short GetKeyState(int vk);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string? name);

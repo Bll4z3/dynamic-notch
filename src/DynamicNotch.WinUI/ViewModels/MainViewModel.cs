@@ -14,9 +14,12 @@ public sealed class MainViewModel : ObservableObject
 
     public MainViewModel(SettingsService settings, MusicViewModel music, ClipboardViewModel clipboard,
                          ShelfViewModel shelf, AskViewModel ask, StatusViewModel status, DevicesViewModel devices,
-                         PageRegistry pages, NotificationService notifications, UsageViewModel usage, FocusTimerViewModel focus)
+                         PageRegistry pages, NotificationService notifications, UsageViewModel usage, FocusTimerViewModel focus,
+                         ActivityViewModel activity, HubViewModel hub)
     {
         _settings = settings;
+        Activity = activity;
+        Hub = hub;
         _notifications = notifications;
         Usage = usage;
         Focus = focus;
@@ -24,7 +27,7 @@ public sealed class MainViewModel : ObservableObject
         Clipboard = clipboard;
         Shelf = shelf;
         Ask = ask;
-        ask.OpenSettingsRequested += () => OpenSettingsRequested?.Invoke();
+        ask.OpenSettingsRequested += () => OpenApiKeyRequested?.Invoke();
         Status = status;
         Devices = devices;
         Pages = pages;
@@ -57,10 +60,16 @@ public sealed class MainViewModel : ObservableObject
     public DevicesViewModel Devices { get; }
     public UsageViewModel Usage { get; }
     public FocusTimerViewModel Focus { get; }
+    /// <summary>The shared activity pill (volume, brightness, Caps Lock, charging, downloads, updates).</summary>
+    public ActivityViewModel Activity { get; }
+    /// <summary>Notifications + quick actions page.</summary>
+    public HubViewModel Hub { get; }
 
     public ICommand OpenSettingsCommand { get; }
     /// <summary>The app opens the (single) Settings window.</summary>
     public event Action? OpenSettingsRequested;
+    /// <summary>Ask needs a key: open Settings on the Claude API key tab.</summary>
+    public event Action? OpenApiKeyRequested;
 
     public ICommand DismissPillCommand { get; }
     public ICommand EnableNotificationsCommand { get; }
@@ -124,7 +133,7 @@ public sealed class MainViewModel : ObservableObject
         if (removed)
         {
             // Nearest enabled page in display order (the one after, else the one before).
-            var all = PageRegistry.All.Select(p => p.Id).ToList();
+            var all = Pages.Ordered.Select(p => p.Id).ToList();
             int pos = all.IndexOf(old);
             var next = all.Skip(pos + 1).FirstOrDefault(enabled.Contains, (PageId)(-1));
             var target = (int)next >= 0 ? next : all.Take(pos).LastOrDefault(enabled.Contains, enabled[0]);
@@ -167,9 +176,14 @@ public sealed class MainViewModel : ObservableObject
     }
     public bool HasPill => CurrentPill != null;
 
+    /// <summary>A pill passed the filters and is queued to show (sounds hook in here).</summary>
+    public event Action<PillRequest>? PillAccepted;
+
     public void EnqueuePill(PillRequest pill)
     {
+        Hub.Record(pill); // every alert lands in the history, shown or not
         var s = _settings.Current;
+        if (s.DoNotDisturb && pill.Source == PillSource.App) return; // held back: history only
         bool allowed = pill.Source switch
         {
             PillSource.App => s.ShowAppNotifications,
@@ -179,6 +193,7 @@ public sealed class MainViewModel : ObservableObject
             _ => true,
         };
         if (!allowed) return;
+        PillAccepted?.Invoke(pill);
         if (_pillQueue.Count > 6) _pillQueue.Dequeue(); // don't build an endless backlog
         _pillQueue.Enqueue(pill);
         if (CurrentPill == null) ShowNext();

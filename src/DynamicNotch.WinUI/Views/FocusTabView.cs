@@ -322,29 +322,3 @@ internal sealed class FocusTabView : Grid
         }
     }
 }
-
-/// <summary>"General" tab: hide-on-fullscreen and a note about the unofficial usage endpoint.</summary>
-internal sealed class GeneralTabView : Grid
-{
-    public GeneralTabView(GeneralTabViewModel vm)
-    {
-        RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var top = new StackPanel();
-        top.Children.Add(SettingsUi.Title("General"));
-        top.Children.Add(SettingsUi.Subtitle("How the notch behaves around other apps."));
-        var card = SettingsUi.Card(SettingsUi.ToggleRow("Hide notch when an app is fullscreen", "Videos, games and presentations. It comes back when they exit.",
-            () => vm.HideWhenFullscreen, v => vm.HideWhenFullscreen = v, vm, nameof(GeneralTabViewModel.HideWhenFullscreen)));
-        card.Margin = Theme.GapTopS3;
-        top.Children.Add(card);
-        Children.Add(top);
-        var note = new TextBlock
-        {
-            Text = "Claude Usage reads an unofficial, undocumented endpoint (api.anthropic.com/api/oauth/usage) with Claude Code's sign-in. " +
-                   "It may change or stop working at any time. The sign-in token is only read into memory and sent to api.anthropic.com.",
-            Style = SettingsUi.StyleOf("CaptionText"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None,
-        };
-        SetRow(note, 1);
-        Children.Add(note);
-    }
-}

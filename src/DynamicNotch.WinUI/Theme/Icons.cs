@@ -65,7 +65,11 @@ public static class Icons
     public const string Check = "M20 6 L9 17 L4 12";
     public const string Key = "M12 16 a4 4 0 1 1 -8 0 a4 4 0 1 1 8 0 z M10.8 13.2 L21 3 M17 7 l3 3 M14.5 9.5 l2 2";
     public const string Alert = "M22 12 a10 10 0 1 1 -20 0 a10 10 0 1 1 20 0 z M12 8 v4 M12 16 h.01";
-    public const string Retry = "M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 v5 h5";
+    /// <summary>Lucide "palette" (Settings ▸ Customisation).</summary>
+    public const string Palette = "M12 2 C6.5 2 2 6.5 2 12 s4.5 10 10 10 c.93 0 1.65 -.75 1.65 -1.69 0 -.44 -.18 -.84 -.44 -1.13 -.29 -.29 -.44 -.65 -.44 -1.13 a1.64 1.64 0 0 1 1.67 -1.67 h2 c3.05 0 5.56 -2.5 5.56 -5.55 C21.97 6.01 17.46 2 12 2 z M13.5 6.5 h.01 M17.5 10.5 h.01 M8.5 7.5 h.01 M6.5 12.5 h.01";
+    /// <summary>Lucide "undo-2".</summary>
+    public const string Undo = "M9 14 4 9 l5 -5 M4 9 h10.5 a5.5 5.5 0 0 1 5.5 5.5 a5.5 5.5 0 0 1 -5.5 5.5 H11";
+    public const string Retry ="M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 v5 h5";
     public const string Paste = "M9 2 h6 a1 1 0 0 1 1 1 v2 a1 1 0 0 1 -1 1 H9 a1 1 0 0 1 -1 -1 V3 a1 1 0 0 1 1 -1 z M16 4 h2 a2 2 0 0 1 2 2 v14 a2 2 0 0 1 -2 2 H6 a2 2 0 0 1 -2 -2 V6 a2 2 0 0 1 2 -2 h2 M12 11 v6 M9 14 l3 3 l3 -3";
 
     // Usage / focus timer / routine editor
@@ -76,6 +80,36 @@ public static class Icons
     public const string ChevronUp = "M18 15 l-6 -6 l-6 6";
     public const string ChevronDown = "M6 9 l6 6 l6 -6";
     public const string Fullscreen = "M8 3 H5 a2 2 0 0 0 -2 2 v3 M21 8 V5 a2 2 0 0 0 -2 -2 h-3 M3 16 v3 a2 2 0 0 0 2 2 h3 M16 21 h3 a2 2 0 0 0 2 -2 v-3";
+
+    // Activity pills / quick actions
+    private const string SpeakerBody = "M11 4.7 a.7 .7 0 0 0 -1.2 -.5 L6.41 7.59 A1.4 1.4 0 0 1 5.42 8 H3 a1 1 0 0 0 -1 1 v6 a1 1 0 0 0 1 1 h2.42 a1.4 1.4 0 0 1 1 .41 l3.38 3.39 A.7 .7 0 0 0 11 19.3 z";
+    public const string VolumeMute = SpeakerBody + " M22 9 l-6 6 M16 9 l6 6";
+    public const string VolumeLow = SpeakerBody;
+    public const string VolumeMid = SpeakerBody + " M16 9 a5 5 0 0 1 0 6";
+    public const string VolumeHigh = SpeakerBody + " M16 9 a5 5 0 0 1 0 6 M19.36 18.36 a9 9 0 0 0 0 -12.73";
+    public const string SunCore = "M16 12 a4 4 0 1 1 -8 0 a4 4 0 1 1 8 0 z";
+    public const string SunRays = "M12 2 v2 M12 20 v2 M4.93 4.93 l1.41 1.41 M17.66 17.66 l1.41 1.41 M2 12 h2 M20 12 h2 M6.34 17.66 l-1.41 1.41 M19.07 4.93 l-1.41 1.41";
+    public const string LockBody = "M5 11 h14 a2 2 0 0 1 2 2 v7 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 v-7 a2 2 0 0 1 2 -2 z";
+    public const string LockShackle = "M7 11 V7 a5 5 0 0 1 10 0 v4";
+    public const string Download = "M12 15 V3 M21 15 v4 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 v-4 M7 10 l5 5 l5 -5";
+    public const string UpdateArrow = "M22 12 a10 10 0 1 1 -20 0 a10 10 0 1 1 20 0 z M16 12 l-4 -4 l-4 4 M12 16 V8";
+    public const string CheckCircle = "M22 12 a10 10 0 1 1 -20 0 a10 10 0 1 1 20 0 z M9 12 l2 2 l4 -4";
+    public const string Folder = "M20 20 a2 2 0 0 0 2 -2 V8 a2 2 0 0 0 -2 -2 h-7.9 a2 2 0 0 1 -1.69 -.9 L9.6 3.9 A2 2 0 0 0 7.93 3 H4 a2 2 0 0 0 -2 2 v13 a2 2 0 0 0 2 2 z";
+    public const string Plane = "M17.8 19.2 L16 11 l3.5 -3.5 C21 6 21.5 4 21 3 c-1 -.5 -3 0 -4.5 1.5 L13 8 L4.8 6.2 c-.5 -.1 -.9 .1 -1.1 .5 l-.3 .5 c-.2 .5 -.1 1 .3 1.3 L9 12 l-2 3 H4 l-1 1 l3 2 l2 3 l1 -1 v-3 l3 -2 l3.5 5.3 c.3 .4 .8 .5 1.3 .3 l.5 -.2 c.4 -.3 .6 -.7 .5 -1.2 z";
+    public const string Moon = "M12 3 a6 6 0 0 0 9 9 a9 9 0 1 1 -9 -9 z";
+    public const string Mic = "M12 2 a3 3 0 0 0 -3 3 v7 a3 3 0 0 0 6 0 V5 a3 3 0 0 0 -3 -3 z M19 10 v2 a7 7 0 0 1 -14 0 v-2 M12 19 v3";
+    public const string MicOff = "M2 2 L22 22 M18.89 13.23 A7 7 0 0 0 19 12 v-2 M5 10 v2 a7 7 0 0 0 12 5 M15 9.34 V5 a3 3 0 0 0 -5.68 -1.33 M9 9 v3 a3 3 0 0 0 5.12 2.12 M12 19 v3";
+    public const string Leaf = "M11 20 A7 7 0 0 1 9.8 6.1 C15.5 5 17 4.48 19 2 c1 2 2 4.18 2 8 c0 5.5 -4.78 10 -10 10 z M2 21 c0 -3 1.85 -5.36 5.08 -6 C9.5 14.52 12 13 13 12";
+    public const string NightLight = "M12 10 V2 M4.93 10.93 l1.41 1.41 M2 18 h2 M20 18 h2 M19.07 10.93 l-1.41 1.41 M22 22 H2 M16 6 l-4 4 l-4 -4 M16 18 a4 4 0 0 0 -8 0";
+    public const string Cast = "M2 8 V6 a2 2 0 0 1 2 -2 h16 a2 2 0 0 1 2 2 v12 a2 2 0 0 1 -2 2 h-6 M2 12 a9 9 0 0 1 8 8 M2 16 a5 5 0 0 1 4 4 M2 20 h.01";
+    public const string Dashboard = "M4 3 h5 a1 1 0 0 1 1 1 v7 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 V4 a1 1 0 0 1 1 -1 z M15 3 h5 a1 1 0 0 1 1 1 v3 a1 1 0 0 1 -1 1 h-5 a1 1 0 0 1 -1 -1 V4 a1 1 0 0 1 1 -1 z M15 12 h5 a1 1 0 0 1 1 1 v7 a1 1 0 0 1 -1 1 h-5 a1 1 0 0 1 -1 -1 v-7 a1 1 0 0 1 1 -1 z M4 16 h5 a1 1 0 0 1 1 1 v3 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 v-3 a1 1 0 0 1 1 -1 z";
+    public const string ChevronRight = "M9 18 l6 -6 l-6 -6";
+    /// <summary>Wi-Fi signal levels (Wifi is full strength).</summary>
+    public const string WifiMid = "M12 20 h.01 M5 12.86 a10 10 0 0 1 14 0 M8.5 16.43 a5 5 0 0 1 7 0";
+    public const string WifiLow = "M12 20 h.01 M8.5 16.43 a5 5 0 0 1 7 0";
+    public const string Lock = LockBody + " " + LockShackle;
+    /// <summary>Six-dot drag handle.</summary>
+    public const string Grip = "M9 5 h.01 M9 12 h.01 M9 19 h.01 M15 5 h.01 M15 12 h.01 M15 19 h.01";
 
     // ---- Rendering ---------------------------------------------------------------------------
     public static bool IsFilled(string data) => data.StartsWith("F1", StringComparison.Ordinal);
@@ -89,12 +123,18 @@ public static class Icons
     {
         if (string.IsNullOrEmpty(data)) return null;
         Path path;
-        try
+        // The geometry type converter parses only the path data (cheaper than XamlReader parsing a whole
+        // <Path> element, which made every icon, and so every popup row, costly to build).
+        try { path = new Path { Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), data) }; }
+        catch
         {
-            path = (Path)XamlReader.Load(
-                "<Path xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" Data=\"" + data + "\" />");
+            try
+            {
+                path = (Path)XamlReader.Load(
+                    "<Path xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" Data=\"" + data + "\" />");
+            }
+            catch { return null; }
         }
-        catch { return null; }
         double s = size / 24.0;
         path.Width = path.Height = 24;
         path.Stroke = brush;

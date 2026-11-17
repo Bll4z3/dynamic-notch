@@ -43,13 +43,13 @@ public sealed class PillSwitch : UserControl
         var track = new Grid { Width = Theme.SwitchWidth, Height = Theme.SwitchHeight, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         _off.CornerRadius = _on.CornerRadius = radius;
         _off.Background = new SolidColorBrush(Theme.SwitchOffColor);
-        _on.Background = new SolidColorBrush(Theme.SwitchOnColor);
+        _on.Background = Theme.AccentBrush; // "on" carries the accent (live)
         track.Children.Add(_off);
         track.Children.Add(_on);
         foreach (var (e, colour) in new[] { (_thumbOff, Theme.SwitchThumbOffColor), (_thumbOn, Theme.SwitchThumbOnColor) })
         {
             e.Width = e.Height = Theme.SwitchThumbSize;
-            e.Fill = new SolidColorBrush(colour);
+            e.Fill = e == _thumbOn ? Theme.OnAccentBrush : new SolidColorBrush(colour);
             e.HorizontalAlignment = HorizontalAlignment.Left;
             e.VerticalAlignment = VerticalAlignment.Center;
             e.Margin = new Thickness(Theme.SwitchThumbInset, 0, 0, 0);
@@ -87,6 +87,8 @@ public sealed class PillSwitch : UserControl
 
     /// <summary>The user flipped the switch (the owner decides whether it sticks; see <see cref="IsOn"/>).</summary>
     public event Action<bool>? Toggled;
+    /// <summary>Any switch in the app was flipped by the user (for the toggle sound).</summary>
+    public static event Action<bool>? UserToggled;
 
     public bool IsOn
     {
@@ -110,6 +112,7 @@ public sealed class PillSwitch : UserControl
     private void Toggle()
     {
         IsOn = !IsOn;
+        UserToggled?.Invoke(IsOn);
         Toggled?.Invoke(IsOn);
     }
 }

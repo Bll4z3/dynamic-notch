@@ -56,6 +56,17 @@ public sealed class Visualizer : StackPanel
         };
     }
 
+    /// <summary>How often the bars change (fps). 30 by default; Low power mode lowers it.</summary>
+    public static double FrameRate { get; set; } =
+        double.TryParse(Environment.GetEnvironmentVariable("NOTCH_VIS_FPS"), out var dev) ? dev : Motion.VisualizerFps; // env: dev A/B only
+
+    /// <summary>Re-applies <see cref="FrameRate"/> (or a style change) to a running loop.</summary>
+    public void Restart()
+    {
+        if (!_playing || !IsLoaded) return;
+        Start();
+    }
+
     public bool IsPlaying
     {
         get => _playing;
@@ -91,25 +102,90 @@ public sealed class Visualizer : StackPanel
         return samples;
     }
 
+    private string _style = "bars";
+
+    /// <summary>"bars" (springy bars), "wave" (dots riding a travelling wave) or "off" (hidden, nothing animates).</summary>
+    public string Style
+    {
+        get => _style;
+        set
+        {
+            if (_style == value) return;
+            bool wasPlaying = _playing && IsLoaded;
+            if (wasPlaying) Stop();
+            _style = value;
+            Visibility = value == "off" ? Visibility.Collapsed : Visibility.Visible;
+            foreach (var b in _bars)
+            {
+                b.Height = value == "wave" ? BarWidth : BarHeight;
+                var v = Anim.VisualOf(b, translation: true);
+                v.CenterPoint = new Vector3((float)BarWidth / 2, (float)b.Height / 2, 0);
+                v.Scale = new Vector3(1, value == "wave" ? 1 : (float)MinLevel, 1);
+                v.StopAnimation("Translation.Y");
+                v.Properties.InsertVector3("Translation", Vector3.Zero);
+            }
+            if (wasPlaying) Start();
+        }
+    }
+
     private void Start()
     {
         _loopStart = SpringModel.Now;
-        if (!Anim.Enabled) return; // "Animation effects" off: the bars stay still
+        if (!Anim.Enabled || FrameRate <= 0 || _style == "off") return; // "Animation effects" off (or the visualiser is off): the bars stay still
         var c = Anim.VisualOf(_bars[0]).Compositor;
-        var linear = c.CreateLinearEasingFunction();
+        if (_style == "wave") { StartWave(c); return; }
+        // Measured: smooth 60 Hz bars kept the compositor redrawing the (large, transparent) host every
+        // frame: ~20% of a core while music played with the notch collapsed. The bars are decorative, so
+        // they hold each value for 1 / FrameRate s (step easing): the compositor only has new frames to
+        // draw at that rate.
+        var step = c.CreateStepEasingFunction(1);
+        step.IsFinalStepSingleFrame = false;
+        int stride = Math.Max(1, (int)Math.Round(SampleRate / Math.Max(1, FrameRate)));
         for (int i = 0; i < BarCount; i++)
         {
             var a = c.CreateScalarKeyFrameAnimation();
             var loop = _loops[i];
-            for (int k = 0; k < loop.Length; k++) a.InsertKeyFrame((float)k / (loop.Length - 1), loop[k], linear);
+            for (int k = 0; k < loop.Length; k += stride) a.InsertKeyFrame((float)k / (loop.Length - 1), loop[k], step);
+            a.InsertKeyFrame(1, loop[^1], step);
             a.Duration = TimeSpan.FromSeconds(LoopSeconds);
             a.IterationBehavior = AnimationIterationBehavior.Forever;
             Anim.VisualOf(_bars[i]).StartAnimation("Scale.Y", a);
         }
     }
 
+    /// <summary>Wave style: each dot moves up and down a sine that travels across them (stepped at <see cref="FrameRate"/>).</summary>
+    private void StartWave(Compositor c)
+    {
+        var step = c.CreateStepEasingFunction(1);
+        step.IsFinalStepSingleFrame = false;
+        const double period = 1.1, amp = (BarHeight - BarWidth) / 2;
+        int keys = Math.Max(8, (int)Math.Round(period * Math.Max(1, FrameRate)));
+        for (int i = 0; i < BarCount; i++)
+        {
+            var a = c.CreateScalarKeyFrameAnimation();
+            for (int k = 0; k <= keys; k++)
+            {
+                double t = (double)k / keys;
+                a.InsertKeyFrame((float)t, (float)(amp * Math.Sin(2 * Math.PI * t - i * 0.9)), step);
+            }
+            a.Duration = TimeSpan.FromSeconds(period);
+            a.IterationBehavior = AnimationIterationBehavior.Forever;
+            Anim.VisualOf(_bars[i], translation: true).StartAnimation("Translation.Y", a);
+        }
+    }
+
     private void Stop()
     {
+        if (_style == "wave")
+        {
+            foreach (var b in _bars)
+            {
+                var v = Anim.VisualOf(b, translation: true);
+                v.StopAnimation("Translation.Y");
+                Anim.SpringTo(v, "Translation.Y", 0, 0, Motion.FadeIn);
+            }
+            return;
+        }
         // Where each loop is right now (deterministic), then a soft spring down to rest.
         double phase = ((SpringModel.Now - _loopStart) % LoopSeconds) / LoopSeconds;
         for (int i = 0; i < BarCount; i++)

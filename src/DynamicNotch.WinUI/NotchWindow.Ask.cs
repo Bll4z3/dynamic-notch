@@ -38,7 +38,9 @@ public sealed partial class NotchWindow
         // Esc while the notch owns focus (keys reach XAML only then; the hook handles it otherwise).
         Root.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, e) =>
         {
-            if (e.Key == VirtualKey.Escape && _hasFocus) { CollapseAsk(); e.Handled = true; }
+            if (e.Key != VirtualKey.Escape || !_hasFocus) return;
+            if (!EscapeClosesPopover()) CollapseAsk();
+            e.Handled = true;
         }), handledEventsToo: true);
         Activated += (_, e) =>
         {

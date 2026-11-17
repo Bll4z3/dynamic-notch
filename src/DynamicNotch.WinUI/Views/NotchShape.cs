@@ -19,7 +19,10 @@ namespace DynamicNotch.Views;
 /// </summary>
 public sealed class NotchShape
 {
-    private const float R = (float)Theme.CornerRadius;
+    /// <summary>Shoulders are built at the largest radius and scaled down to the live one.</summary>
+    private const float RB = (float)Theme.MaxCornerRadius;
+    private readonly CompSpring _radius;
+    private readonly CompositionColorGradientStop _hl1, _hl2;
 
     public NotchShape(UIElement host, double hostWidth, double hostHeight)
     {
@@ -30,12 +33,14 @@ public sealed class NotchShape
         Props = c.CreatePropertySet();
         Props.InsertScalar("W", (float)Theme.CollapsedWidth);
         Props.InsertScalar("H", (float)Theme.CollapsedHeight);
+        Props.InsertScalar("ShadowO", (float)Theme.ShadowOpacity);
+        _radius = new CompSpring(Props, "R", Motion.Notch, Theme.CornerRadius);
 
         // Body: a path with continuous ("squircle") bottom corners, its top pushed up above the screen
         // edge. It follows the W / H springs as a baked path animation (see Follow).
         _hostWidth = hostWidth;
         Body = c.CreatePathGeometry();
-        Body.Path = BodyPath(Theme.CollapsedWidth, Theme.CollapsedHeight);
+        Body.Path = BodyPath(Theme.CollapsedWidth, Theme.CollapsedHeight, Theme.CornerRadius);
 
         var size = new Vector2(hw, (float)hostHeight);
         var root = c.CreateContainerVisual();
@@ -48,7 +53,7 @@ public sealed class NotchShape
         shadow.Offset = new Vector3(0, (float)Theme.ShadowOffsetY, 0);
         shadow.Color = Color.FromArgb(255, 0, 0, 0);
         // No shadow for the 6px minimal notch (it would read as a smudge).
-        shadow.StartAnimation("Opacity", Expr(FormattableString.Invariant($"N.H > {Theme.MinimalHeight + 1} ? {Theme.ShadowOpacity} : 0")));
+        shadow.StartAnimation("Opacity", Expr(FormattableString.Invariant($"N.H > {Theme.MinimalHeight + 1} ? N.ShadowO : 0")));
 
         var fill = c.CreateShapeVisual();
         fill.Size = size;
@@ -77,8 +82,10 @@ public sealed class NotchShape
         var gradient = c.CreateLinearGradientBrush();
         gradient.MappingMode = CompositionMappingMode.Absolute;
         gradient.ColorStops.Add(c.CreateColorGradientStop(0, Color.FromArgb(0, 255, 255, 255)));
-        gradient.ColorStops.Add(c.CreateColorGradientStop(0.55f, Theme.HighlightColor));
-        gradient.ColorStops.Add(c.CreateColorGradientStop(1, Theme.HighlightColor));
+        _hl1 = c.CreateColorGradientStop(0.55f, Theme.HighlightColor);
+        gradient.ColorStops.Add(_hl1);
+        _hl2 = c.CreateColorGradientStop(1, Theme.HighlightColor);
+        gradient.ColorStops.Add(_hl2);
         gradient.StartPoint = Vector2.Zero;
         gradient.StartAnimation("EndPoint", Expr("Vector2(0, Max(1, N.H))"));
         var outline = c.CreateSpriteShape(Body);
@@ -106,7 +113,7 @@ public sealed class NotchShape
         {
             var a = c.CreateExpressionAnimation(e);
             a.SetReferenceParameter("N", Props);
-            a.SetScalarParameter("R", R);
+            a.SetScalarParameter("RB", RB);
             a.SetScalarParameter("HW", hw);
             return a;
         }
@@ -117,19 +124,19 @@ public sealed class NotchShape
         ShapeVisual Shoulder(bool left)
         {
             var v = c.CreateShapeVisual();
-            v.Size = new Vector2(R + 2, R);
+            v.Size = new Vector2(RB + 2, RB);
             v.Clip = c.CreateInsetClip();
             var ring = c.CreateEllipseGeometry();
-            ring.Center = new Vector2(left ? 0 : R + 2, R);
-            ring.Radius = new Vector2(R * 1.25f);
+            ring.Center = new Vector2(left ? 0 : RB + 2, RB);
+            ring.Radius = new Vector2(RB * 1.25f);
             var s = c.CreateSpriteShape(ring);
             s.StrokeBrush = c.CreateColorBrush(Theme.NotchColor);
-            s.StrokeThickness = R * 0.5f; // covers radii R..1.5R, past the box's far corner (√2·R)
+            s.StrokeThickness = RB * 0.5f; // covers radii R..1.5R, past the box's far corner (√2·R)
             v.Shapes.Add(s);
-            v.StartAnimation("Scale", Expr("Vector3(Min(R, N.H / 2) / R, Min(R, N.H / 2) / R, 1)"));
+            v.StartAnimation("Scale", Expr("Vector3(Min(N.R, N.H / 2) / RB, Min(N.R, N.H / 2) / RB, 1)"));
             v.StartAnimation("Offset", Expr(left
-                ? "Vector3((HW - N.W) / 2 - Min(R, N.H / 2), 0, 0)"
-                : "Vector3((HW + N.W) / 2 - 2 * Min(R, N.H / 2) / R, 0, 0)"));
+                ? "Vector3((HW - N.W) / 2 - Min(N.R, N.H / 2), 0, 0)"
+                : "Vector3((HW + N.W) / 2 - 2 * Min(N.R, N.H / 2) / RB, 0, 0)"));
             return v;
         }
     }
@@ -159,7 +166,22 @@ public sealed class NotchShape
         _h = height;
         width.Changed += Rebake;
         height.Changed += Rebake;
+        _radius.Changed += Rebake;
         Rebake();
+    }
+
+    /// <summary>Springs the corners (body and shoulders) to a new radius.</summary>
+    public void SetRadius(double r, bool animate)
+    {
+        if (animate) _radius.SetTarget(r, Motion.Notch); else _radius.Snap(r);
+        if (!animate) Rebake();
+    }
+
+    /// <summary>Border highlight colour and shadow strength (Settings ▸ Customisation ▸ Notch look).</summary>
+    public void SetSurface(Windows.UI.Color highlight, double shadowOpacity)
+    {
+        _hl1.Color = _hl2.Color = highlight;
+        Props.InsertScalar("ShadowO", (float)shadowOpacity);
     }
 
     private void Rebake()
@@ -167,12 +189,13 @@ public sealed class NotchShape
         if (_w == null || _h == null) return;
         var wm = _w.Model;
         var hm = _h.Model;
+        var rm = _radius.Model;
         double now = SpringModel.Now;
-        double duration = Math.Max(wm.RemainingDuration, hm.RemainingDuration);
+        double duration = Math.Max(Math.Max(wm.RemainingDuration, hm.RemainingDuration), rm.RemainingDuration);
         if (!Anim.Enabled || duration <= 0.001)
         {
             Body.StopAnimation("Path");
-            Body.Path = BodyPath(wm.ValueAt(now), hm.ValueAt(now));
+            Body.Path = BodyPath(wm.ValueAt(now), hm.ValueAt(now), rm.ValueAt(now));
             return;
         }
         var a = Compositor.CreatePathKeyFrameAnimation();
@@ -181,7 +204,7 @@ public sealed class NotchShape
         for (int i = 0; i <= n; i++)
         {
             double t = now + duration * i / n;
-            a.InsertKeyFrame((float)i / n, BodyPath(wm.ValueAt(t), hm.ValueAt(t)), linear);
+            a.InsertKeyFrame((float)i / n, BodyPath(wm.ValueAt(t), hm.ValueAt(t), rm.ValueAt(t)), linear);
         }
         a.Duration = TimeSpan.FromSeconds(duration);
         Body.StartAnimation("Path", a);
@@ -194,12 +217,12 @@ public sealed class NotchShape
     /// to the corner (0.22 of that length), giving a tight turn with a long ease instead of a circular arc.
     /// The command sequence never changes, so any two outlines interpolate cleanly.
     /// </summary>
-    private CompositionPath BodyPath(double w, double h)
+    private CompositionPath BodyPath(double w, double h, double radius)
     {
         w = Math.Max(0, w);
         h = Math.Max(0, h);
-        double x0 = (_hostWidth - w) / 2, x1 = x0 + w, top = -Theme.CornerRadius;
-        double r = Math.Min(Theme.CornerRadius, Math.Min(h / 2, w / 2));
+        double x0 = (_hostWidth - w) / 2, x1 = x0 + w, top = -Theme.MaxCornerRadius;
+        double r = Math.Min(Math.Max(0, radius), Math.Min(h / 2, w / 2));
         double l = Math.Max(0, Math.Min(r * (1 + Theme.CornerSmoothing), Math.Min(h, w / 2)));
         double d = l * 0.22;
         Vector2 P(double x, double y) => new((float)x, (float)y);

@@ -18,7 +18,7 @@ using WinRT.Interop;
 
 namespace DynamicNotch;
 
-public enum NotchState { Collapsed, Pill, Expanded }
+public enum NotchState { Collapsed, Pill, Activity, Expanded }
 
 /// <summary>
 /// The overlay window. Owns the notch state machine (collapsed ▸ pill ▸ expanded), same rules as the
@@ -78,6 +78,8 @@ public sealed partial class NotchWindow : Window
         BuildClipboard();
         BuildAsk();
         BuildFocus();
+        BuildActivity();
+        BuildHub();
         UpdateGlowColor(animate: false);
         // Any click on the notch pins it, including clicks that a button inside it handles.
         NotchRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Notch_PointerPressed), handledEventsToo: true);
@@ -88,6 +90,10 @@ public sealed partial class NotchWindow : Window
     }
 
     public MainViewModel Vm { get; }
+
+    /// <summary>The notch moved between states (previous, next): sounds hook in here.</summary>
+    public event Action<NotchState, NotchState>? StateChanged;
+    public bool IsExpanded => _state == NotchState.Expanded;
 
     private static DispatcherQueueTimer OneShot(DispatcherQueue q, int ms, Action tick)
     {
@@ -159,15 +165,22 @@ public sealed partial class NotchWindow : Window
 
     private void OnDisplaySettingsChanged(object? sender, EventArgs e) => Ui.Post(PositionWindow, DispatcherQueuePriority.Low);
 
-    /// <summary>Top-centre of the primary monitor, in physical pixels (DPI-correct on any monitor setup).</summary>
+    /// <summary>
+    /// Top-centre of the chosen monitor (primary, or the one under the pointer), in physical pixels
+    /// (DPI-correct on any monitor setup), pushed down by the top offset and drawn at the notch scale:
+    /// the window grows by the scale and the content is scaled by a render transform, so every DIP→pixel
+    /// conversion (region, hit tests, key capture) goes through <see cref="_scale"/> and stays exact.
+    /// </summary>
     private void PositionWindow()
     {
-        var (bounds, scale) = Native.GetPrimaryMonitor();
+        var (bounds, monitorScale) = UseMouseMonitor ? Native.GetMonitorUnderCursor() : Native.GetPrimaryMonitor();
+        double scale = monitorScale * NotchScale;
         _scale = scale;
+        ApplyNotchScale();
         int w = (int)Math.Round(Theme.HostWidth * scale);
         int h = (int)Math.Round(Theme.HostHeight * scale);
         _winLeft = bounds.Left + (bounds.Width - w) / 2;
-        _winTop = bounds.Top;
+        _winTop = bounds.Top + (int)Math.Round(TopOffset * monitorScale);
         Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, _winLeft, _winTop, w, h, Native.SWP_NOACTIVATE);
         UpdateRegion();
     }
@@ -203,6 +216,8 @@ public sealed partial class NotchWindow : Window
         NotchRing.RingSize = Theme.NotchRingSize;
         NotchRing.Thickness = Theme.NotchRingThickness;
         NotchRing.Margin = Theme.CollapsedPadding;
+        NotchRing.ChargeHalo = true; // the closed notch breathes a soft green halo while charging
+        NotchRing.GreenWhileCharging = true;
         CollapsedTime.SetStyle(t => t.Style = (Style)Application.Current.Resources["ClockTimeText"]);
         CollapsedRight.Margin = Theme.CollapsedPadding;
         Bars.Margin = Theme.GapRightS2;
@@ -297,6 +312,7 @@ public sealed partial class NotchWindow : Window
     {
         if (_hint) return NotchState.Pill;
         if (_hover || _pinned || _dragIn || _outgoingDrag) return NotchState.Expanded;
+        if (Vm.Activity.HasActivity) return NotchState.Activity;
         if (Vm.HasPill) return NotchState.Pill;
         return NotchState.Collapsed;
     }
@@ -308,15 +324,20 @@ public sealed partial class NotchWindow : Window
 
         var prev = _state;
         _state = next;
+        StateChanged?.Invoke(prev, next);
 
-        // Pills wait while the notch is open; they resume (with a fresh timer) when it closes.
-        Vm.HoldPill(next == NotchState.Expanded || _hint);
+        // Pills wait while the notch is open or an activity pill is up; they resume (with a fresh timer) after.
+        Vm.HoldPill(next is NotchState.Expanded or NotchState.Activity || _hint);
         if (next == NotchState.Expanded && Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
+        if (next == NotchState.Expanded && Vm.CurrentPage == PageId.Hub) _frame.Hub.OnShown();
+        // An activity pill that ended under the pointer: carry on as a normal hover (open after the usual delay).
+        if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; Restart(_expandTimer, Motion.HoverExpandDelayMs); }
         if (prev == NotchState.Expanded && next != NotchState.Expanded)
         {
             Unpin();
             _frame.Shelf.ClosePreview();
             _frame.Preview.SetShown(false);
+            _frame.Hub.ClosePopover();
             if (!_selecting)
             {
                 Vm.Ask.CancelIfBusy();     // collapsing with a request in flight cancels it
@@ -352,6 +373,9 @@ public sealed partial class NotchWindow : Window
             case NotchState.Pill:
                 w = Theme.PillWidth; h = Theme.PillHeight; preset = Motion.Pop; // pop with a little overshoot
                 break;
+            case NotchState.Activity:
+                w = ActivityWidth(); h = Theme.ActivityHeight; preset = Motion.ActivityMorph;
+                break;
             default:
                 w = minimal ? Theme.MinimalWidth : playing || timer ? Theme.CollapsedPlayingWidth : Theme.CollapsedWidth;
                 h = minimal ? Theme.MinimalHeight : Theme.CollapsedHeight;
@@ -369,6 +393,7 @@ public sealed partial class NotchWindow : Window
             _frame.Stagger.Hide();
         }
         if (_state != NotchState.Pill) _pillContent.SetTarget(0, Motion.FadeOut);
+        if (_state != NotchState.Activity) _activityContent.SetTarget(0, Motion.FadeOut);
         // Toward the expanded notch the collapsed bits fade a little slower; toward a pill they get out of the way quickly.
         if (_state != NotchState.Collapsed || minimal)
             _collapsedContent.SetTarget(0, _state == NotchState.Expanded ? Motion.FadeIn : Motion.FadeOut);
@@ -376,9 +401,12 @@ public sealed partial class NotchWindow : Window
 
         ExpandedLayer.IsHitTestVisible = _state == NotchState.Expanded;
         PillLayer.IsHitTestVisible = _state == NotchState.Pill && !_hint;
+        ActivityLayer.IsHitTestVisible = _state == NotchState.Activity;
+        UpdateCompactActivity();
         _frame.SetAskActive(_state == NotchState.Expanded && Vm.IsAskPage);
 
         Bars.IsPlaying = _state == NotchState.Collapsed && playing && !minimal && !timer;
+        _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage);
         Vm.Music.IsVisible = _state == NotchState.Expanded && Vm.IsMusicPage;
         Vm.Usage.IsVisible = _state == NotchState.Expanded && Vm.CurrentPage == PageId.Usage;
         UpdateCompactTimer();
@@ -417,6 +445,10 @@ public sealed partial class NotchWindow : Window
             case NotchState.Pill when _pillContent.Target < 1:
                 ready = h => Progress(h, Theme.CollapsedHeight, Theme.PillHeight) >= Motion.ContentRevealThreshold;
                 reveal = () => _pillContent.SetTarget(1, Motion.Pop);
+                break;
+            case NotchState.Activity when _activityContent.Target < 1:
+                ready = h => Progress(h, Theme.CollapsedHeight, Theme.ActivityHeight) >= Motion.ContentRevealThreshold;
+                reveal = () => { _activityContent.SetTarget(1, Motion.Pop); _activityView.Enter(); };
                 break;
             case NotchState.Collapsed when !Vm.MinimalNotch && _collapsedContent.Target < 1:
                 ready = h => MorphProgress(h) < 0.3 && h > Theme.CollapsedHeight * 0.6;
@@ -505,6 +537,8 @@ public sealed partial class NotchWindow : Window
                 if (!Vm.IsAskPage) _frame.Preview.SetShown(false);
                 if (!Vm.IsAskPage && _hasFocus) ReleaseFocus(restore: true); // no text boxes on the other pages
                 Vm.Music.IsVisible = _state == NotchState.Expanded && Vm.IsMusicPage;
+                if (_state == NotchState.Expanded && Vm.CurrentPage == PageId.Hub) _frame.Hub.OnShown();
+                if (Vm.CurrentPage != PageId.Hub) _frame.Hub.ClosePopover();
                 ApplyTargets(); // the notch height differs per page
                 break;
             case nameof(MainViewModel.CurrentPill):
@@ -589,6 +623,7 @@ public sealed partial class NotchWindow : Window
             Vm.HoldPill(true);
             return;
         }
+        if (OnActivityPointerEntered()) return; // hovering an activity pill holds it instead of opening the notch
         if (!_hover) Restart(_expandTimer, Motion.HoverExpandDelayMs);
     }
 
@@ -613,6 +648,7 @@ public sealed partial class NotchWindow : Window
             _hoverPill = false;
             Vm.HoldPill(false);
         }
+        OnActivityPointerLeft();
         ScheduleCollapseCheck();
     }
 
@@ -639,7 +675,7 @@ public sealed partial class NotchWindow : Window
 
     private void Notch_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (_state == NotchState.Pill) return; // the pill handles its own click (dismiss)
+        if (_state is NotchState.Pill or NotchState.Activity) return; // pills handle their own click (dismiss)
         if (!_pinned) Pin();
     }
 
@@ -703,7 +739,7 @@ public sealed partial class NotchWindow : Window
                 if (Vm.Music.PlayPauseCommand.CanExecute(null)) Vm.Music.PlayPauseCommand.Execute(null);
                 break;
             case NotchKey.Escape:
-                CollapseAsk();
+                if (!EscapeClosesPopover()) CollapseAsk();
                 break;
         }
     }

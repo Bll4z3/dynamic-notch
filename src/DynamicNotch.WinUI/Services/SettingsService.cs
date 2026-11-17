@@ -14,6 +14,8 @@ public sealed class AppSettings
     public int LowBatteryPercent { get; set; } = 20;
     /// <summary>Ids of notch pages switched off in Settings ▸ Pages (see PageRegistry).</summary>
     public List<string> DisabledPages { get; set; } = new();
+    /// <summary>The page order chosen in Settings ▸ Pages (page ids; empty = the built-in order).</summary>
+    public List<string> PageOrder { get; set; } = new();
 
     // ---- Focus timer (Settings ▸ Focus Timer) ----
     public List<FocusInterval> FocusRoutine { get; set; } = Services.FocusRoutine.Defaults();
@@ -24,6 +26,30 @@ public sealed class AppSettings
     // ---- Fullscreen apps ----
     /// <summary>Hide the notch while another app is fullscreen (video, game, presentation).</summary>
     public bool HideWhenFullscreen { get; set; } = true;
+
+    // ---- Appearance (Settings ▸ General) ----
+    /// <summary>The chosen UI font (FontService id, e.g. "bundled:Geist"); null = the default (Inter).</summary>
+    public string? FontId { get; set; }
+
+    // ---- Activity pills (Settings ▸ Pills) ----
+    public bool ShowVolumePill { get; set; } = true;
+    public bool ShowBrightnessPill { get; set; } = true;
+    public bool ShowCapsLockPill { get; set; } = true;
+    public bool ShowDownloadPill { get; set; } = true;
+    // (Charging and low battery use ShowBatteryPills.)
+
+    // ---- Notifications + Quick actions page ----
+    /// <summary>The notch's own Do Not Disturb: app notification pills are held back (they still go to the history).</summary>
+    public bool DoNotDisturb { get; set; }
+
+    // ---- Settings ▸ Customisation (accent, shape, sounds, motion, notch look, behaviour, looks) ----
+    public CustomSettings Custom { get; set; } = new();
+
+    // ---- Updates (Settings ▸ Updates) ----
+    public bool AutoCheckUpdates { get; set; } = true;
+    public DateTimeOffset? LastUpdateCheck { get; set; }
+    /// <summary>The newest version already announced with a pill (each new version is announced once).</summary>
+    public string? LastAnnouncedVersion { get; set; }
 }
 
 /// <summary>Settings and app data live in %LocalAppData%\DynamicNotch (virtualised per-package under MSIX).</summary>
@@ -48,6 +74,7 @@ public sealed class SettingsService
         }
         catch { Current = new AppSettings(); }
         Current.FocusRoutine = FocusRoutine.Sanitize(Current.FocusRoutine); // a hand-edited file can't break the timer
+        Current.Custom = (Current.Custom ?? new CustomSettings()).Sanitize();
     }
 
     public void Update(Action<AppSettings> change)
@@ -55,6 +82,32 @@ public sealed class SettingsService
         change(Current);
         Save();
         Changed?.Invoke();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _saveTimer;
+
+    /// <summary>
+    /// Applies a change now but writes the file once things go quiet (~400 ms): for values that change
+    /// continuously, like a slider being dragged. Never writes from the UI thread more than once per burst.
+    /// </summary>
+    public void UpdateDeferred(Action<AppSettings> change)
+    {
+        change(Current);
+        Changed?.Invoke();
+        if (_saveTimer == null)
+        {
+            _saveTimer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            _saveTimer.IsRepeating = false;
+            _saveTimer.Interval = TimeSpan.FromMilliseconds(400);
+            _saveTimer.Tick += (_, _) => { _saveTimer.Stop(); var snapshot = JsonSerializer.Serialize(Current, Json); _ = Task.Run(() => WriteRaw(snapshot)); };
+        }
+        _saveTimer.Stop();
+        _saveTimer.Start();
+    }
+
+    private void WriteRaw(string json)
+    {
+        try { Directory.CreateDirectory(DataFolder); File.WriteAllText(_path, json); } catch { }
     }
 
     private void Save()
