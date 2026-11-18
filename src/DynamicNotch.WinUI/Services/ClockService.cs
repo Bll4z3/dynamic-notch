@@ -55,12 +55,23 @@ public sealed class ClockService : IDisposable
     /// <summary>"Tue 10 Nov 2026" in the user's language.</summary>
     public static string FormatDate(DateTime t) => t.ToString("ddd d MMM yyyy", CultureInfo.CurrentCulture);
 
-    /// <summary>Time following the system short-time pattern (12h "5:56 PM" or 24h "17:56").</summary>
+    /// <summary>"system" (the short-time pattern), "12" or "24" (Settings ▸ Customisation ▸ Collapsed notch).</summary>
+    public static string ClockFormat { get; set; } = "system";
+
+    /// <summary>Time in the chosen format (system: 12h "5:56 PM" or 24h "17:56", per the short-time pattern).</summary>
     public static string FormatTime(DateTime t)
     {
-        var pattern = CultureInfo.CurrentCulture.DateTimeFormat.ShortTimePattern;
+        var pattern = ClockFormat switch
+        {
+            "12" => CultureInfo.CurrentCulture.DateTimeFormat.ShortTimePattern.Contains('H') ? "h:mm tt" : CultureInfo.CurrentCulture.DateTimeFormat.ShortTimePattern.Replace("hh", "h"),
+            "24" => "HH:mm",
+            _ => CultureInfo.CurrentCulture.DateTimeFormat.ShortTimePattern,
+        };
         return t.ToString(pattern, CultureInfo.CurrentCulture);
     }
+
+    /// <summary>Short date for the collapsed notch ("Tue 17").</summary>
+    public static string FormatShortDate(DateTime t) => t.ToString("ddd d", CultureInfo.CurrentCulture);
 
     public void Dispose()
     {

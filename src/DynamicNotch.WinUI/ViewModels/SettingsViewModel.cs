@@ -12,18 +12,25 @@ public sealed record SettingsTab(string Title, string Icon, object Content);
 
 public sealed class SettingsViewModel : ObservableObject
 {
-    public SettingsViewModel(SecretStore secrets, ClaudeService claude, PageRegistry pages, SettingsService settings, FocusTimerViewModel timer)
+    public SettingsViewModel(SecretStore secrets, ClaudeService claude, PageRegistry pages, SettingsService settings, FocusTimerViewModel timer,
+                             UpdateService updates, FontService fonts, ThemeService theme, SoundService sounds)
     {
         ApiKey = new ApiKeyTabViewModel(secrets, claude);
         Pages = new PagesTabViewModel(pages);
         Focus = new FocusTabViewModel(settings, timer);
-        General = new GeneralTabViewModel(settings);
+        General = new GeneralTabViewModel(settings, fonts);
+        Pills = new PillsTabViewModel(settings);
+        Updates = new UpdatesTabViewModel(settings, updates);
+        Customisation = new CustomisationTabViewModel(settings, theme, sounds, fonts);
         Tabs = new ObservableCollection<SettingsTab>
         {
+            new("General", Icons.Settings, General),
+            new("Customisation", Icons.Palette, Customisation),
             new("Claude API key", Icons.Key, ApiKey),
             new("Pages", Icons.Shelf, Pages),
+            new("Pills", Icons.Bell, Pills),
             new("Focus Timer", Icons.Timer, Focus),
-            new("General", Icons.Settings, General),
+            new("Updates", Icons.UpdateArrow, Updates),
         };
         _selected = Tabs[0];
     }
@@ -33,6 +40,13 @@ public sealed class SettingsViewModel : ObservableObject
     public PagesTabViewModel Pages { get; }
     public FocusTabViewModel Focus { get; }
     public GeneralTabViewModel General { get; }
+    public PillsTabViewModel Pills { get; }
+    public UpdatesTabViewModel Updates { get; }
+    public CustomisationTabViewModel Customisation { get; }
+
+    /// <summary>Selects the Updates tab (tray "Check for updates…", update pill).</summary>
+    public void SelectUpdates() => SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, Updates));
+    public void SelectApiKey() => SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, ApiKey));
 
     private SettingsTab _selected;
     public SettingsTab SelectedTab
@@ -129,17 +143,25 @@ public sealed class PagesTabViewModel : ObservableObject
 {
     private readonly DispatcherQueueTimer _messageTimer;
 
+    private readonly PageRegistry _registry;
+    private readonly Dictionary<PageId, PageRowViewModel> _rowById;
+
     public PagesTabViewModel(PageRegistry registry)
     {
-        Rows = PageRegistry.All.Select(p => new PageRowViewModel(p, registry, this)).ToList();
+        _registry = registry;
+        _rowById = PageRegistry.All.ToDictionary(p => p.Id, p => new PageRowViewModel(p, registry, this));
         _messageTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
         _messageTimer.IsRepeating = false;
         _messageTimer.Interval = TimeSpan.FromSeconds(2.5);
         _messageTimer.Tick += (_, _) => { _messageTimer.Stop(); Message = ""; };
-        registry.Changed += () => { foreach (var r in Rows) r.Refresh(); };
+        registry.Changed += () => { foreach (var r in _rowById.Values) r.Refresh(); OnPropertyChanged(nameof(Rows)); };
     }
 
-    public IReadOnlyList<PageRowViewModel> Rows { get; }
+    /// <summary>Rows in the user's page order (the registry's order).</summary>
+    public IReadOnlyList<PageRowViewModel> Rows => _registry.Ordered.Select(p => _rowById[p.Id]).ToList();
+
+    /// <summary>Moves a page to a new position (drag or Alt+↑ / Alt+↓). Saved immediately; the notch follows live.</summary>
+    public void Move(PageRowViewModel row, int index) => _registry.Move(row.Page.Id, index);
 
     private string _message = "";
     public string Message { get => _message; private set => Set(ref _message, value); }
@@ -339,11 +361,116 @@ public sealed class FocusTabViewModel : ObservableObject
 public sealed class GeneralTabViewModel : ObservableObject
 {
     private readonly SettingsService _settings;
-    public GeneralTabViewModel(SettingsService settings) => _settings = settings;
+
+    public GeneralTabViewModel(SettingsService settings, FontService fonts)
+    {
+        _settings = settings;
+        Fonts = fonts;
+        fonts.FontChanged += _ => OnPropertyChanged(nameof(CurrentFont));
+    }
+
+    public FontService Fonts { get; }
+    public FontChoice CurrentFont => Fonts.Current;
+    public void ApplyFont(FontChoice f) => Fonts.Apply(f);
+    public void ResetFont() => Fonts.ResetToDefault();
 
     public bool HideWhenFullscreen
     {
         get => _settings.Current.HideWhenFullscreen;
         set { if (value != HideWhenFullscreen) { _settings.Update(s => s.HideWhenFullscreen = value); OnPropertyChanged(); } }
     }
+
+    /// <summary>Minimal notch (also in the tray menu). The app wires <see cref="MinimalChanged"/> to the notch.</summary>
+    public bool MinimalNotch
+    {
+        get => _settings.Current.MinimalNotch;
+        set { if (value == MinimalNotch) return; MinimalChanged?.Invoke(value); OnPropertyChanged(); }
+    }
+    public event Action<bool>? MinimalChanged;
+
+    /// <summary>Start with Windows (also in the tray menu). The app does the registration and calls <see cref="RefreshStartup"/>.</summary>
+    public bool StartWithWindows
+    {
+        get => _settings.Current.StartWithWindows;
+        set { if (value == StartWithWindows) return; StartupChanged?.Invoke(value); }
+    }
+    public event Action<bool>? StartupChanged;
+
+    /// <summary>Re-reads the toggles changed elsewhere (tray menu).</summary>
+    public void RefreshToggles()
+    {
+        OnPropertyChanged(nameof(MinimalNotch));
+        OnPropertyChanged(nameof(StartWithWindows));
+    }
+}
+
+/// <summary>"Pills" tab: which transient pills the notch shows (each kind can be switched off).</summary>
+public sealed class PillsTabViewModel : ObservableObject
+{
+    private readonly SettingsService _settings;
+    public PillsTabViewModel(SettingsService settings) => _settings = settings;
+
+    private bool Get(Func<AppSettings, bool> read) => read(_settings.Current);
+    private void Put(bool value, Func<AppSettings, bool> read, Action<AppSettings, bool> write, string name)
+    {
+        if (value == read(_settings.Current)) return;
+        _settings.Update(s => write(s, value));
+        OnPropertyChanged(name);
+    }
+
+    public bool Volume { get => Get(s => s.ShowVolumePill); set => Put(value, s => s.ShowVolumePill, (s, v) => s.ShowVolumePill = v, nameof(Volume)); }
+    public bool Brightness { get => Get(s => s.ShowBrightnessPill); set => Put(value, s => s.ShowBrightnessPill, (s, v) => s.ShowBrightnessPill = v, nameof(Brightness)); }
+    public bool CapsLock { get => Get(s => s.ShowCapsLockPill); set => Put(value, s => s.ShowCapsLockPill, (s, v) => s.ShowCapsLockPill = v, nameof(CapsLock)); }
+    public bool Battery { get => Get(s => s.ShowBatteryPills); set => Put(value, s => s.ShowBatteryPills, (s, v) => s.ShowBatteryPills = v, nameof(Battery)); }
+    public bool Downloads { get => Get(s => s.ShowDownloadPill); set => Put(value, s => s.ShowDownloadPill, (s, v) => s.ShowDownloadPill = v, nameof(Downloads)); }
+    public bool AppNotifications { get => Get(s => s.ShowAppNotifications); set => Put(value, s => s.ShowAppNotifications, (s, v) => s.ShowAppNotifications = v, nameof(AppNotifications)); }
+    public bool Devices { get => Get(s => s.ShowDevicePills); set => Put(value, s => s.ShowDevicePills, (s, v) => s.ShowDevicePills = v, nameof(Devices)); }
+    public bool Network { get => Get(s => s.ShowNetworkPills); set => Put(value, s => s.ShowNetworkPills, (s, v) => s.ShowNetworkPills = v, nameof(Network)); }
+}
+
+/// <summary>"Updates" tab: version, automatic checks, Check now, Download / Restart to update.</summary>
+public sealed class UpdatesTabViewModel : ObservableObject
+{
+    private readonly SettingsService _settings;
+    private readonly UpdateService _updates;
+
+    public UpdatesTabViewModel(SettingsService settings, UpdateService updates)
+    {
+        _settings = settings;
+        _updates = updates;
+        updates.Changed += () =>
+        {
+            foreach (var n in new[] { nameof(StatusText), nameof(CanGet), nameof(ActionText), nameof(IsBusy), nameof(Progress), nameof(LastCheckedText) })
+                OnPropertyChanged(n);
+        };
+    }
+
+    public string VersionText => $"Dynamic Notch {UpdateService.CurrentVersionText}";
+
+    public bool AutoCheck
+    {
+        get => _settings.Current.AutoCheckUpdates;
+        set { if (value == AutoCheck) return; _settings.Update(s => s.AutoCheckUpdates = value); OnPropertyChanged(); }
+    }
+
+    public string StatusText => string.IsNullOrEmpty(_updates.Message)
+        ? _updates.Available is { } a ? $"Version {a.Version.ToString(3)} is available"
+          : _updates.LastChecked != null ? $"No newer version found (you have {UpdateService.CurrentVersionText})" : "Not checked yet"
+        : _updates.Message;
+
+    public string LastCheckedText => _updates.LastChecked is { } t ? $"Last checked {t.LocalDateTime:g}" : "";
+    public bool IsBusy => _updates.Status is UpdateStatus.Checking or UpdateStatus.Downloading;
+    public double Progress => _updates.Progress;
+    public bool CanGet => _updates.Available != null && _updates.Status != UpdateStatus.Downloading;
+
+    public string ActionText => _updates.Status switch
+    {
+        UpdateStatus.Ready => "Restart to update",
+        UpdateStatus.Downloading => "Downloading…",
+        _ => UpdateService.CanInstallInPlace ? "Download and install" : "Open download page",
+    };
+
+    public Task CheckAsync() => _updates.CheckAsync(manual: true);
+    public Task GetAsync() => _updates.GetUpdateAsync();
+    public void OpenPage() => _updates.OpenReleasePage();
 }

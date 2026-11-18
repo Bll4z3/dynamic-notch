@@ -8,7 +8,7 @@ public static class AppConfig
     public const uint AskHotkeyVirtualKey = 0x20; // VK_SPACE
     public const string AskHotkeyLabel = "Ctrl+Shift+Space";
 
-    // ---- Claude API (the ONLY network call the app makes, and only on Send / Test connection) ----
+    // ---- Claude API (on Send / Test connection only; the other network use is the update check below) ----
     public const string ClaudeApiUrl = "https://api.anthropic.com/v1/messages";
     public const string ClaudeApiVersion = "2023-06-01";
     public const string ClaudeModel = "claude-haiku-5-5";
@@ -30,6 +30,11 @@ public static class AppConfig
     public const int UsagePollSeconds = 60;
     /// <summary>Longest wait between retries after errors / 429s.</summary>
     public const int UsageMaxBackoffSeconds = 15 * 60;
+
+    // ---- Updates (GitHub Releases; anonymous, automatic at most daily, can be turned off) -----------
+    public const string UpdateRepo = "Bll4z3/dynamic-notch";
+    public static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromHours(24);
+    public static readonly TimeSpan UpdateFirstCheckDelay = TimeSpan.FromSeconds(20);
 
     // ---- Screenshots ---------------------------------------------------------------------------
     public const int ScreenshotMaxEdge = 1568;

@@ -71,19 +71,25 @@ public sealed class PageNavigator : Grid
         double iconsWidth = n * Theme.NavSlot + 2 * Theme.NavPillPadding;
         Width = iconsWidth + 2 * Theme.NavHitPadding;
 
-        // ---- Expression text shared by every part ----
-        string D = Anim.F(Theme.NavDot), E = Anim.F(Theme.NavDotActiveExtra), G = Anim.F(Theme.NavDotGap);
-        string Active(int i) => $"Max(0, 1 - Abs(N.Page - {i}))";
-        string W(int i) => $"({D} + {E} * {Active(i)})";
-        var total = new StringBuilder("(");
-        for (int j = 0; j < n; j++) total.Append(j > 0 ? " + " : "").Append(W(j));
-        total.Append($" + {Anim.F((n - 1) * Theme.NavDotGap)})");
-        string Total = total.ToString();
+        // ---- Shared values, each a short chained expression on the property set (one long inline
+        //      expression per part grows with the page count and the compositor rejects it past ~5 pages) ----
+        string D = Anim.F(Theme.NavDot), E = Anim.F(Theme.NavDotActiveExtra);
+        string Active(int i) => $"S.A{i}";
+        string W(int i) => $"S.W{i}";
+        for (int j = 0; j < n; j++)
+        {
+            Chain($"A{j}", $"Max(0, 1 - Abs(N.Page - {j}))");
+            Chain($"W{j}", $"{D} + {E} * S.A{j}");
+            Chain($"B{j}", j == 0 ? "0" : $"S.B{j - 1} + S.W{j - 1}"); // widths of the dots before this one
+        }
+        Chain("Tot", $"S.B{n - 1} + S.W{n - 1} + {Anim.F((n - 1) * Theme.NavDotGap)}");
+        string Total = "S.Tot";
 
         // ---- Pill: centre stretches with ScaleX, the round caps slide outwards (ends stay semicircles) ----
         string p = "Clamp(S.Pill, 0, 1.1)";
-        string pillWidth = $"Max({Anim.F(Theme.NavPillHeight)}, ({Total} + {Anim.F(2 * Theme.NavPillPadding)}) + ({Anim.F(iconsWidth)} - ({Total} + {Anim.F(2 * Theme.NavPillPadding)})) * {p})";
-        string centre = $"Max(0, {pillWidth} - {Anim.F(Theme.NavPillHeight)})";
+        Chain("PillW", $"Max({Anim.F(Theme.NavPillHeight)}, (S.Tot + {Anim.F(2 * Theme.NavPillPadding)}) + ({Anim.F(iconsWidth)} - (S.Tot + {Anim.F(2 * Theme.NavPillPadding)})) * {p})");
+        Chain("Cen", $"Max(0, S.PillW - {Anim.F(Theme.NavPillHeight)})");
+        string centre = "S.Cen";
         string pillOpacity = $"0.55 + 0.45 * Clamp(S.Pill, 0, 1)";
         double centreRectWidth = Math.Max(1, iconsWidth - Theme.NavPillHeight);
 
@@ -122,7 +128,7 @@ public sealed class PageNavigator : Grid
                                   HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             string glyph = page.UseClaudeLogo ? Icons.Sparkle : page.Icon; // the logo asset loader arrives with the Ask page
             var dim = new VectorIcon { Data = glyph, Size = Theme.NavIconSize, Foreground = new SolidColorBrush(Theme.NavDimColor) };
-            var accent = new VectorIcon { Data = glyph, Size = Theme.NavIconSize, Foreground = new SolidColorBrush(Theme.NavAccentColor) };
+            var accent = new VectorIcon { Data = glyph, Size = Theme.NavIconSize, Foreground = Theme.AccentBrush }; // the current page in the accent (live)
             icon.Children.Add(dim);
             icon.Children.Add(accent);
             var hit = new Border
@@ -136,9 +142,8 @@ public sealed class PageNavigator : Grid
             hit.PointerExited += (_, _) => hover.SetTarget(1, Motion.Hover);
             hit.Tapped += (_, e) => { PageClicked?.Invoke(index); e.Handled = true; };
 
-            var before = new StringBuilder("0");
-            for (int j = 0; j < i; j++) before.Append(" + ").Append(W(j));
-            string dotCentre = $"(-{Total} / 2 + {before} + {Anim.F(i * Theme.NavDotGap)} + {W(i)} / 2)";
+            Chain($"C{i}", $"-{Total} / 2 + S.B{i} + {Anim.F(i * Theme.NavDotGap)} + {W(i)} / 2");
+            string dotCentre = $"S.C{i}";
             string cm = $"Clamp(S.M{i}, 0, 1)";
             string cx = $"({dotCentre} + ({Anim.F(SlotCentre(i, n))} - {dotCentre}) * {cm})";
 
@@ -182,6 +187,16 @@ public sealed class PageNavigator : Grid
         Width = size, Height = size, Fill = new SolidColorBrush(color), IsHitTestVisible = false,
         HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
     }.Also(Children.Add);
+
+    /// <summary>A derived scalar on the navigator's property set, driven by an expression.</summary>
+    private void Chain(string name, string expression)
+    {
+        _s.InsertScalar(name, 0);
+        var e = _c.CreateExpressionAnimation(expression);
+        e.SetReferenceParameter("N", _page);
+        e.SetReferenceParameter("S", _s);
+        _s.StartAnimation(name, e);
+    }
 
     private void Bind(UIElement el, string property, string expression, bool translation = false)
     {

@@ -2,7 +2,7 @@ using DynamicNotch.Design;
 
 namespace DynamicNotch.Services;
 
-public enum PageId { Music, Clipboard, Ask, Usage, Focus }
+public enum PageId { Music, Clipboard, Ask, Usage, Focus, Hub }
 
 /// <summary>One notch page. <see cref="UseClaudeLogo"/> shows the Claude logo asset instead of <see cref="Icon"/> where it fits.</summary>
 public sealed record PageDefinition(PageId Id, string Name, string Description, string Icon, bool UseClaudeLogo = false);
@@ -19,6 +19,7 @@ public sealed class PageRegistry
         new(PageId.Music, "Music Player", "Now playing, controls and the album glow", Icons.Music),
         new(PageId.Clipboard, "Clipboard + Shelf", "Recent copies and files you drop on the notch", Icons.Clipboard),
         new(PageId.Ask, "Ask Claude", "Ask anything or about your screen (Ctrl+Shift+Space)", Icons.Sparkle, UseClaudeLogo: true),
+        new(PageId.Hub, "Notifications + Controls", "Notification history and quick actions", Icons.Dashboard),
         new(PageId.Usage, "Claude Usage", "Your 5-hour and weekly plan limits", Icons.Gauge),
         new(PageId.Focus, "Focus Timer", "Pomodoro rounds with breaks", Icons.Timer),
     };
@@ -37,8 +38,40 @@ public sealed class PageRegistry
 
     public bool IsEnabled(PageId id) => !_settings.Current.DisabledPages.Contains(id.ToString());
 
+    /// <summary>
+    /// Every page in the user's order (Settings ▸ Pages, saved as <see cref="AppSettings.PageOrder"/>). This is
+    /// the single source of truth for the order: navigation, the page dots, the navigator icons and the
+    /// default page all follow it. Pages missing from the saved order (e.g. added by an update) keep their
+    /// place from <see cref="All"/>; unknown names are ignored.
+    /// </summary>
+    public IReadOnlyList<PageDefinition> Ordered
+    {
+        get
+        {
+            var saved = _settings.Current.PageOrder
+                .Select(n => All.FirstOrDefault(p => p.Id.ToString() == n))
+                .Where(p => p != null).Select(p => p!).Distinct().ToList();
+            for (int i = 0; i < All.Count; i++)
+                if (!saved.Contains(All[i])) saved.Insert(Math.Min(i, saved.Count), All[i]);
+            return saved;
+        }
+    }
+
     /// <summary>Enabled pages in display order.</summary>
-    public IReadOnlyList<PageId> Enabled => All.Select(p => p.Id).Where(IsEnabled).ToList();
+    public IReadOnlyList<PageId> Enabled => Ordered.Select(p => p.Id).Where(IsEnabled).ToList();
+
+    /// <summary>Moves a page to <paramref name="index"/> in the order (saved immediately; raises <see cref="Changed"/>).</summary>
+    public void Move(PageId id, int index)
+    {
+        var order = Ordered.Select(p => p.Id).ToList();
+        int from = order.IndexOf(id);
+        index = Math.Clamp(index, 0, order.Count - 1);
+        if (from < 0 || from == index) return;
+        order.RemoveAt(from);
+        order.Insert(index, id);
+        _settings.Update(s => s.PageOrder = order.Select(p => p.ToString()).ToList());
+        Changed?.Invoke();
+    }
 
     /// <summary>Position of a page among the enabled pages, or -1 when it's off.</summary>
     public int IndexOf(PageId id)

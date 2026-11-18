@@ -17,6 +17,43 @@ public readonly record struct SpringPreset(double Stiffness, double Damping, dou
 /// <summary>All motion tuning lives here. Every animation in the app is one of these springs.</summary>
 public static class Motion
 {
+    // ---- Live motion tokens (Settings ▸ Customisation ▸ Motion) -------------------------------
+    /// <summary>smooth (as designed), snappy, bouncy, calm, reduced.</summary>
+    public static string Feel { get; private set; } = "smooth";
+    /// <summary>0.5x .. 1.5x: higher is faster.</summary>
+    public static double Speed { get; private set; } = 1;
+    /// <summary>Low power mode: shorter staggers, slower visualiser, no glow breathing.</summary>
+    public static bool LowPower { get; set; }
+
+    public static void SetFeel(string feel, double speed)
+    {
+        Feel = feel;
+        Speed = Math.Clamp(speed, 0.5, 1.5);
+    }
+
+    /// <summary>
+    /// Every spring passes through here when it is created or retargeted (SpringModel), so the feel and
+    /// speed apply to the whole app at once. Smooth at 1x returns the preset unchanged.
+    /// </summary>
+    public static SpringPreset Tune(SpringPreset p)
+    {
+        if (Feel == "smooth" && Speed == 1) return p;
+        double w = Math.Sqrt(p.Stiffness / p.Mass);
+        double response = 2 * Math.PI / w, zeta = p.Damping / (2 * Math.Sqrt(p.Stiffness * p.Mass));
+        switch (Feel)
+        {
+            case "snappy": response *= 0.72; zeta = Math.Min(1, zeta + 0.06); break;
+            case "bouncy": response *= 0.95; zeta = Math.Max(0.42, zeta * 0.72); break;
+            case "calm": response *= 1.35; zeta = Math.Max(zeta, 0.92); break;
+            case "reduced": response *= 0.6; zeta = Math.Max(zeta, 1); break;
+        }
+        response /= Speed;
+        return SpringPreset.FromResponse(response, zeta);
+    }
+
+    /// <summary>A stagger delay under the current speed / power mode.</summary>
+    public static double StaggerScale => (LowPower ? 0.5 : 1) / Speed * (Feel == "reduced" ? 0.3 : 1);
+
     // ---- Core presets (softer than v1: higher damping, small overshoot, longer settle) ---------
     /// <summary>The notch container morph (collapsed ⇄ pill ⇄ expanded).</summary>
     public static readonly SpringPreset Notch = SpringPreset.FromResponse(0.52, 0.80);
@@ -137,4 +174,76 @@ public static class Motion
     /// <summary>Phase change: the digits block dips and springs back; the cue ring flashes for this long (ms).</summary>
     public static readonly SpringPreset PhaseChange = SpringPreset.FromResponse(0.5, 0.72);
     public const int PhaseCueMs = 1600;
+
+    // ---- Activity pills --------------------------------------------------------------------------------
+    /// <summary>The notch growing into an activity pill and springing between pill widths.</summary>
+    public static readonly SpringPreset ActivityMorph = SpringPreset.FromResponse(0.46, 0.76);
+    /// <summary>Progress / level fills (a transform, never a width change).</summary>
+    public static readonly SpringPreset ActivityFill = SpringPreset.FromResponse(0.3, 0.92);
+    /// <summary>The padlock shackle opening / closing with a small bounce, and the lock "click" pulse.</summary>
+    public static readonly SpringPreset LockShackle = SpringPreset.FromResponse(0.38, 0.55);
+    public static readonly SpringPreset LockClick = SpringPreset.FromResponse(0.2, 0.45);
+    public const double LockClickImpulse = -2.2;
+    /// <summary>How long each kind stays up before it dismisses itself (ms).</summary>
+    public const int ActivitySliderMs = 1800, ActivityCapsMs = 1800, ActivityBatteryMs = 3000,
+                     ActivityDownloadDoneMs = 3000, ActivityUpdateMs = 3000, ActivityDownloadIdleMs = 6000;
+    /// <summary>A waiting lower-priority activity is dropped once it's this old.</summary>
+    public const int ActivityStaleMs = 2000;
+    /// <summary>Activity content blocks fade / rise in this far apart, and rise by this much.</summary>
+    public const int ActivityStaggerMs = 25;
+    public const double ActivityRise = 6;
+    /// <summary>Percentages count to their new value over this long.</summary>
+    public const int CountUpMs = 240;
+    /// <summary>Charging halo breathing period (s), and the indeterminate download shimmer period (s).</summary>
+    public const double ChargePulsePeriod = 2.4, ShimmerPeriod = 1.3;
+    /// <summary>Caps Lock state is read this long after the key (the toggle has applied by then).</summary>
+    public const int CapsReadDelayMs = 30;
+    /// <summary>Download-folder changes are coalesced to at most one pill update per this many ms.</summary>
+    public const int DownloadThrottleMs = 250;
+    /// <summary>Battery ring colour change by level, and the quicker charging ⇄ level cross-fade (ms).</summary>
+    public const int RingColorMs = 700, ChargeColorMs = 300;
+    /// <summary>The charging / unplugged bolt pops in from this scale (with the Pop overshoot).</summary>
+    public const double BoltPopFrom = 0.45;
+
+    // ---- Notification history: clear all, undo, dismiss ------------------------------------------------
+    /// <summary>A row leaving to the right (Clear all cascade, × dismiss) and coming back (Undo).</summary>
+    public static readonly SpringPreset RowLeave = SpringPreset.FromResponse(0.26, 1.0);
+    public static readonly SpringPreset RowEnter = SpringPreset.FromResponse(0.4, 0.82);
+    /// <summary>Rows below a dismissed row springing up to close the gap; a dragged row springing back.</summary>
+    public static readonly SpringPreset RowCollapse = SpringPreset.FromResponse(0.4, 0.84);
+    public static readonly SpringPreset RowSnapBack = SpringPreset.FromResponse(0.34, 0.7);
+    /// <summary>The bell's damped ring-wobble when the list empties (low damping + impulse ≈ ±12°).</summary>
+    public static readonly SpringPreset BellWobble = SpringPreset.FromResponse(0.32, 0.22);
+    public const double BellWobbleImpulse = 260;
+    public const double RowLeaveDistance = 40, RowLeaveScale = 0.96;
+    /// <summary>Clear-all cascade: delay per visible row, capped in total (ms).</summary>
+    public const int RowStaggerMs = 25, RowStaggerCapMs = 300;
+    /// <summary>The soft highlight sweeping down behind the leaving rows (ms).</summary>
+    public const int SweepMs = 520;
+    // ---- Quick-action popovers ------------------------------------------------------------------------------
+    /// <summary>The popover springing out of its tile (and back).</summary>
+    public static readonly SpringPreset PopoverOpen = SpringPreset.FromResponse(0.38, 0.84);
+    /// <summary>Closing is quicker than opening and never overshoots.</summary>
+    public static readonly SpringPreset PopoverClose = SpringPreset.FromResponse(0.22, 1.0);
+    public const double PopoverStartScale = 0.6;
+    /// <summary>A popup row fading / rising into place (open stagger, devices arriving).</summary>
+    public static readonly SpringPreset PopRowEnter = SpringPreset.FromResponse(0.34, 0.88);
+    public const double PopRowRise = 6;
+    /// <summary>Only this many rows are staggered (the rest arrive with the last one).</summary>
+    public const int PopRowStaggerMax = 8;
+    /// <summary>Skeleton rows' opacity pulse period (s).</summary>
+    public const double SkeletonPulsePeriod = 1.2;
+    /// <summary>Popup rows arrive this far apart (ms); the spinner's period (s); Wi-Fi rescans while open (ms).</summary>
+    public const int PopRowStaggerMs = 22;
+    public const double SpinnerPeriod = 0.9;
+    public const int WifiRescanMs = 10_000;
+
+    /// <summary>Applying a new UI font: text dips to this opacity and cross-fades back in the new face.</summary>
+    public const double FontSwapDip = 0.35;
+    /// <summary>A dragged page row lifts to this scale.</summary>
+    public const double RowLiftScale = 1.03;
+    /// <summary>How long Undo stays available after Clear all (ms).</summary>
+    public const int UndoWindowMs = 5000;
+    /// <summary>Swipe to dismiss: distance (fraction of the row width) or fling speed (DIPs/s) that commits it.</summary>
+    public const double SwipeCommitFraction = 0.35, SwipeFlingVelocity = 700, SwipeStartDistance = 6, SwipeLeftResistance = 0.25;
 }

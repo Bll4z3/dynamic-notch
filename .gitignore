@@ -11,3 +11,6 @@ artifacts/
 *.pfx
 *.snk
 claude.key
+
+# Local performance measurements (tools/perf)
+tools/perf/results/

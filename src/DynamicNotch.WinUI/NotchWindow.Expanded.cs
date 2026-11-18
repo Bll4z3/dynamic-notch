@@ -33,6 +33,8 @@ public sealed partial class NotchWindow
 
     /// <summary>Dev: the navigator's icon state without a hover.</summary>
     public void ShowNavigatorIcons() => _frame.Navigator.ShowIcons();
+    /// <summary>Dev: the Notifications + Controls page (for --perf-popovers).</summary>
+    internal Views.HubPage DevHub => _frame.Hub;
 
     private void BuildExpanded()
     {
@@ -144,22 +146,31 @@ public sealed partial class NotchWindow
     {
         foreach (var pair in _matched)
         {
-            pair.M.InsertScalar("Active", _state != NotchState.Pill && pair.Allowed() ? 1 : 0);
+            pair.M.InsertScalar("Active", _state is not (NotchState.Pill or NotchState.Activity) && pair.Allowed() ? 1 : 0);
             pair.M.InsertScalar("Near", pair.PageIndex());
         }
     }
 
     // ---- Album glow ------------------------------------------------------------------------------
-    private void UpdateGlowColor(bool animate) =>
-        _frame.Glow.SetColor(AlbumColorService.Extract(Vm.Music.Artwork), animate);
+    /// <summary>The current song's extracted colour (null without artwork), for "Follow album colour".</summary>
+    private Windows.UI.Color? _albumColor;
 
-    /// <summary>Brighter while playing, dimmed while paused; the breathing pulse only while open and playing.</summary>
+    private void UpdateGlowColor(bool animate)
+    {
+        var album = AlbumColorService.Extract(Vm.Music.Artwork);
+        _albumColor = Vm.Music.Artwork != null ? album : null;
+        _frame.Glow.SetColor(GlowColorFor(album), animate);
+        _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage);
+    }
+
+    /// <summary>Brighter while playing, dimmed while paused; the breathing pulse only while open and playing (never in Low power).</summary>
     private void UpdateGlowLevel()
     {
         bool open = _state == NotchState.Expanded;
         bool playing = Vm.Music.IsPlaying;
-        _frame.Glow.SetLevel(!open || Vm.Pages.IndexOf(PageId.Music) < 0 ? 0 : playing ? Theme.GlowMaxOpacity : Theme.GlowPausedOpacity);
-        _frame.Glow.SetPulsing(open && playing);
+        double level = !open || Vm.Pages.IndexOf(PageId.Music) < 0 ? 0 : playing ? Theme.GlowMaxOpacity : Theme.GlowPausedOpacity;
+        _frame.Glow.SetLevel(level * GlowScale);
+        _frame.Glow.SetPulsing(open && playing && GlowScale > 0 && !Motion.LowPower);
     }
 
     /// <summary>Profile mode: confirm the music details column is centred on the cover (logged to frames.log).</summary>

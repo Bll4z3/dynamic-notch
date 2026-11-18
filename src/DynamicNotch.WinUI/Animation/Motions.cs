@@ -111,7 +111,7 @@ public sealed class StaggerGroup
         if (_items.Count == 0) return;
         int first = _items[0].order;
         foreach (var (order, spring) in _items)
-            spring.SetTarget(1, Motion.FadeIn, (order - first) * Motion.StaggerStepMs / 1000.0);
+            spring.SetTarget(1, Motion.FadeIn, (order - first) * Motion.StaggerStepMs / 1000.0 * Motion.StaggerScale);
     }
 
     public void Hide()

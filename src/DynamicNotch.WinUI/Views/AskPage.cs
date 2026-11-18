@@ -81,7 +81,7 @@ public sealed class AskPage : UserControl
         _chip1.Margin = Theme.AskChipMargin;
         _idle.Children.Add(_chip1);
         _input = Input("Ask anything, or about your screen…");
-        _send1 = new PillButton(Icons.ArrowUp, "Send") { Command = ask.SendCommand, Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center };
+        _send1 = new PillButton(Icons.ArrowUp, "Send") { UseAccent = true, Command = ask.SendCommand, Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center };
         Row(_idleInputRow, _input, _send1, new PillButton(Icons.Crop, "Select area", quiet: true) { Command = ask.SelectAreaCommand, Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center });
         _idle.Children.Add(_idleInputRow);
         _idleRow2.Margin = Theme.GapTopS2;
@@ -107,7 +107,7 @@ public sealed class AskPage : UserControl
         _conversation.Children.Add(_chip2);
         _followUp = Input("Ask a follow-up…");
         _stop = new IconButton(26, Theme.IconSmall) { Icon = Icons.Stop, Foreground = Theme.PrimaryText, Command = ask.StopCommand, Tooltip = "Stop", Margin = Theme.GapLeftS1, VerticalAlignment = VerticalAlignment.Center };
-        _send2 = new PillButton(Icons.ArrowUp, "Send") { Command = ask.SendCommand, Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center };
+        _send2 = new PillButton(Icons.ArrowUp, "Send") { UseAccent = true, Command = ask.SendCommand, Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center };
         var followRow = new Grid { Margin = Theme.GapTopS1 };
         Row(followRow, _followUp, _stop, _send2,
             new PillButton(Icons.Crop, "Select area", quiet: true) { Command = ask.SelectAreaCommand, Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center },

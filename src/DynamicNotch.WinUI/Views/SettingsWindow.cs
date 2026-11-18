@@ -42,9 +42,15 @@ internal sealed class SettingsWindow : Window
     private readonly CompSpring _open, _tab;
     private readonly DispatcherQueueTimer _closeTimer;
     private bool _closing;
+    private SpriteVisual? _caster;
+    private CompositionVisualSurface? _surface;
+    private DropShadow? _shadow;
 
     /// <summary>Raised with the window handle when it opens / IntPtr.Zero when it closes (for the keyboard hook).</summary>
     public static event Action<IntPtr>? HandleChanged;
+
+    /// <summary>The open Settings window's handle (file pickers need an owner), or IntPtr.Zero.</summary>
+    public static IntPtr CurrentHandle => _instance?._hwnd ?? IntPtr.Zero;
 
     private SettingsWindow(SettingsViewModel vm)
     {
@@ -64,8 +70,7 @@ internal sealed class SettingsWindow : Window
         Native.SetExStyle(_hwnd, Native.WS_EX_APPWINDOW | Native.WS_EX_TOPMOST, Native.WS_EX_TOOLWINDOW);
 
         // ---- Card: tab column | divider + content ----
-        _card.Width = Theme.SettingsWidth;
-        _card.Height = Theme.SettingsHeight;
+        // The card fills the window (minus the shadow room), so resizing the window resizes it.
         _card.Background = Theme.NotchBrush;
         _card.BorderBrush = Theme.HighlightBorderBrush;
         _card.BorderThickness = new Thickness(1);
@@ -84,8 +89,8 @@ internal sealed class SettingsWindow : Window
         Grid.SetRow(list, 1);
         _tabHighlight.Height = Theme.SettingsTabHeight;
         _tabHighlight.VerticalAlignment = VerticalAlignment.Top;
-        _tabHighlight.CornerRadius = Theme.Radius;
-        _tabHighlight.Background = Theme.CardHoverBrush;
+        _tabHighlight.CornerRadius = Theme.RadiusSmall;
+        _tabHighlight.Background = Theme.AccentSubtleBrush; // the selected tab carries the accent
         list.Children.Add(_tabHighlight);
         var rows = new StackPanel();
         foreach (var tab in vm.Tabs) rows.Children.Add(TabRow(tab));
@@ -100,12 +105,39 @@ internal sealed class SettingsWindow : Window
         _views[vm.Pages] = new PagesTabView(vm.Pages);
         _views[vm.Focus] = new FocusTabView(vm.Focus);
         _views[vm.General] = new GeneralTabView(vm.General);
+        _views[vm.Customisation] = new CustomisationTabView(vm.Customisation);
+        _views[vm.Pills] = new PillsTabView(vm.Pills);
+        _views[vm.Updates] = new UpdatesTabView(vm.Updates);
         foreach (var v in _views.Values) content.Children.Add(v);
         var close = new IconButton(26, Theme.IconSmall) { Icon = Icons.Close, Foreground = Theme.SecondaryText, Tooltip = "Close (Esc)", HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
         close.Click += AnimateClose;
         content.Children.Add(close);
         contentHost.Child = content;
         _card.Children.Add(contentHost);
+
+        // Resize grip (bottom-right): a system resize, clamped to the minimum size below.
+        var grip = new Grid { Width = 18, Height = 18, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 4, 4), Background = Theme.TransparentBrush, Tag = NoDragTag };
+        Grid.SetColumnSpan(grip, 2);
+        foreach (var (len, off) in new[] { (10.0, 3.0), (6.0, 7.0) })
+            grip.Children.Add(new Microsoft.UI.Xaml.Shapes.Line { X1 = 18 - off - len, Y1 = 18 - off, X2 = 18 - off, Y2 = 18 - off - len, Stroke = Theme.TertiaryText, StrokeThickness = 1.2, IsHitTestVisible = false });
+        grip.ProtectedCursorSet(Microsoft.UI.Input.InputSystemCursorShape.SizeNorthwestSoutheast);
+        ToolTipService.SetToolTip(grip, "Resize");
+        grip.PointerPressed += (_, e) => { Native.BeginWindowResize(_hwnd); e.Handled = true; };
+        _card.Children.Add(grip);
+        AppWindow.Changed += (_, a) =>
+        {
+            if (!a.DidSizeChange) return;
+            double scale = Native.GetPrimaryMonitor().scale;
+            int minW = (int)Math.Round((Theme.SettingsMinWidth + 2 * Theme.SettingsShadowRoom) * scale);
+            int minH = (int)Math.Round((Theme.SettingsMinHeight + 2 * Theme.SettingsShadowRoom) * scale);
+            var size = AppWindow.Size;
+            if (size.Width < minW || size.Height < minH) AppWindow.Resize(new SizeInt32(Math.Max(minW, size.Width), Math.Max(minH, size.Height)));
+        };
+
+        // Radius / accent / shadow tokens follow live in this window too.
+        vm.Customisation.Theme.RegisterRoot(_root);
+        Services.ThemeService.RadiusChanged += OnRadiusChanged;
+        vm.Customisation.Theme.Changed += OnThemeChanged;
 
         // Room around the card for its shadow.
         var stage = new Grid { Padding = new Thickness(Theme.SettingsShadowRoom) };
@@ -123,6 +155,14 @@ internal sealed class SettingsWindow : Window
         _open = new CompSpring(props, "o", Motion.WindowOpen, 0);
         _tab = new CompSpring(props, "tab", Motion.TabHighlight, 0, precision: 50);
         cv.CenterPoint = new Vector3((float)Theme.SettingsWidth / 2, (float)Theme.SettingsHeight / 2, 0);
+        var shv = ElementCompositionPreview.GetElementVisual(_shadowHost);
+        _card.SizeChanged += (_, e) =>
+        {
+            var centre = new Vector3((float)e.NewSize.Width / 2, (float)e.NewSize.Height / 2, 0);
+            cv.CenterPoint = shv.CenterPoint = centre;
+            if (_caster != null) _caster.Size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
+            if (_surface != null) _surface.SourceSize = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
+        };
         string s = $"({Anim.F(Motion.WindowStartScale)} + (1 - {Anim.F(Motion.WindowStartScale)}) * p.o)";
         foreach (var v in new[] { cv, ElementCompositionPreview.GetElementVisual(_shadowHost) })
         {
@@ -155,9 +195,19 @@ internal sealed class SettingsWindow : Window
         Closed += (_, _) =>
         {
             vm.PropertyChanged -= OnVmChanged;
+            Services.ThemeService.RadiusChanged -= OnRadiusChanged;
+            vm.Customisation.Theme.Changed -= OnThemeChanged;
             _instance = null;
             HandleChanged?.Invoke(IntPtr.Zero);
         };
+    }
+
+    private void OnRadiusChanged() { }
+
+    private void OnThemeChanged(Services.ThemeService.Part parts)
+    {
+        if (parts.HasFlag(Services.ThemeService.Part.Surface) && _shadow != null)
+            _shadow.Opacity = (float)Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity);
     }
 
     /// <summary>Marks an element (a tab row, a list row…) that must never start a window drag.</summary>
@@ -175,6 +225,21 @@ internal sealed class SettingsWindow : Window
     }
 
     /// <summary>Opens the window, or brings the existing one to the front.</summary>
+    /// <summary>A new UI font: refresh the open window's text with a short cross-fade.</summary>
+    public static void ApplyFont(ISet<string> previousSources)
+    {
+        var w = _instance;
+        if (w == null) return;
+        Services.FontService.Refresh(w._root, previousSources);
+        if (!Anim.Enabled) return;
+        var a = Anim.VisualOf(w._card).Compositor.CreateScalarKeyFrameAnimation();
+        a.InsertKeyFrame(0, (float)Motion.FontSwapDip);
+        a.InsertKeyFrame(1, 1);
+        a.Duration = TimeSpan.FromMilliseconds(260);
+        // The card's opacity belongs to the open/close spring; fade its content row instead.
+        foreach (var child in w._card.Children.OfType<UIElement>()) Anim.VisualOf(child).StartAnimation("Opacity", a);
+    }
+
     public static void ShowSingle(SettingsViewModel vm)
     {
         if (_instance != null)
@@ -187,8 +252,10 @@ internal sealed class SettingsWindow : Window
         // Centred on the primary monitor, in physical pixels.
         var (bounds, scale) = Native.GetPrimaryMonitor();
         int width = (int)Math.Round((Theme.SettingsWidth + 2 * Theme.SettingsShadowRoom) * scale);
-        int height = (int)Math.Round((Theme.SettingsHeight + 2 * Theme.SettingsShadowRoom) * scale);
-        w.AppWindow.MoveAndResize(new RectInt32(bounds.Left + (bounds.Width - width) / 2, bounds.Top + (bounds.Height - height) / 2, width, height));
+        // 540 DIPs tall by default; up to 620 when the screen has room (the Customisation tab scrolls under its pinned preview).
+        double tall = Math.Clamp(bounds.Height / scale * 0.8 - 2 * Theme.SettingsShadowRoom, Theme.SettingsHeight, 620);
+        int height = (int)Math.Round((tall + 2 * Theme.SettingsShadowRoom) * scale);
+        w.AppWindow.MoveAndResize(new RectInt32(bounds.Left + (bounds.Width - width) / 2, bounds.Top + Math.Max(0, (bounds.Height - height) / 2), width, Math.Min(height, bounds.Height)));
         w.Activate();
         Native.MakeSeeThroughPopup(w._hwnd); // showing re-applies the presenter frame
         Native.SetForegroundWindow(w._hwnd);
@@ -243,16 +310,16 @@ internal sealed class SettingsWindow : Window
     private void BuildShadow(Compositor c)
     {
         var size = new Vector2((float)Theme.SettingsWidth, (float)Theme.SettingsHeight);
-        var surface = c.CreateVisualSurface();
+        var surface = _surface = c.CreateVisualSurface();
         surface.SourceVisual = ElementCompositionPreview.GetElementVisual(_card);
         surface.SourceSize = size;
-        var shadow = c.CreateDropShadow();
+        var shadow = _shadow = c.CreateDropShadow();
         shadow.BlurRadius = (float)Theme.SettingsShadowBlur;
         shadow.Offset = new Vector3(0, (float)Theme.SettingsShadowOffsetY, 0);
-        shadow.Opacity = (float)Theme.SettingsShadowOpacity;
+        shadow.Opacity = (float)Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity);
         shadow.Color = Color.FromArgb(255, 0, 0, 0);
         shadow.Mask = c.CreateSurfaceBrush(surface);
-        var caster = c.CreateSpriteVisual();
+        var caster = _caster = c.CreateSpriteVisual();
         caster.Size = size;
         caster.Shadow = shadow;
         ElementCompositionPreview.SetElementChildVisual(_shadowHost, caster);
@@ -392,67 +459,3 @@ internal sealed class ApiKeyTabView : StackPanel
     }
 }
 
-/// <summary>"Pages" tab: one card row per notch page with a pill switch; at least one stays on.</summary>
-internal sealed class PagesTabView : Grid
-{
-    public PagesTabView(PagesTabViewModel vm)
-    {
-        RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var top = new StackPanel();
-        top.Children.Add(new TextBlock { Text = "Pages", Style = AskPage.TextStyle("TitleText") });
-        top.Children.Add(new TextBlock { Text = "Choose which pages the notch shows.", Style = AskPage.TextStyle("SecondaryText"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1 });
-        var rows = new StackPanel { Margin = new Thickness(0, 0, Theme.S3, 0) };
-        foreach (var row in vm.Rows) rows.Children.Add(Row(row));
-        // Five pages no longer fit the card's height on every display scale: the list scrolls.
-        var scroll = new ScrollViewer { Content = rows, Margin = Theme.GapTopS3, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 5 * (Theme.PageRowHeight + Theme.S2) };
-        top.Children.Add(scroll);
-        var message = new TextBlock { FontFamily = Theme.FontSemiBold, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = Theme.FontBody, Foreground = Theme.DangerBrush, Margin = Theme.GapTopS1 };
-        top.Children.Add(message);
-        Children.Add(top);
-        var footer = new TextBlock { Text = "Changes apply instantly.", Style = AskPage.TextStyle("CaptionText") };
-        SetRow(footer, 1);
-        Children.Add(footer);
-        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(PagesTabViewModel.Message)) message.Text = vm.Message; };
-    }
-
-    private static FrameworkElement Row(PageRowViewModel row)
-    {
-        var card = new Border
-        {
-            Background = Theme.CardBrush, BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius, Padding = Theme.PageRowPadding, Margin = Theme.PageRowMargin, MinHeight = Theme.PageRowHeight,
-        };
-        var g = new Grid();
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        // Icon in a rounded tile
-        var tile = new Border
-        {
-            Width = Theme.PageIconTile, Height = Theme.PageIconTile, VerticalAlignment = VerticalAlignment.Center,
-            CornerRadius = Theme.Radius, Background = Theme.TileBrush, BorderBrush = Theme.TileBorderBrush, BorderThickness = new Thickness(1),
-            Child = row.UseClaudeLogo
-                ? new ClaudeLogo(Theme.IconMedium, Theme.PrimaryText) { HorizontalAlignment = HorizontalAlignment.Center }
-                : new VectorIcon { Data = row.Icon, Size = Theme.IconMedium, Foreground = Theme.PrimaryText, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
-        };
-        g.Children.Add(tile);
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = Theme.GapLeftS3 };
-        text.Children.Add(new TextBlock { Text = row.Name, Style = AskPage.TextStyle("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        text.Children.Add(new TextBlock { Text = row.Description, Style = AskPage.TextStyle("CaptionText"), Foreground = Theme.SecondaryText, Margin = Theme.GapTopS1 });
-        SetColumn(text, 1);
-        g.Children.Add(text);
-        var sw = new PillSwitch { VerticalAlignment = VerticalAlignment.Center, Margin = Theme.GapLeftS3, IsOn = row.IsEnabled };
-        ToolTipService.SetToolTip(sw, row.Name);
-        sw.Toggled += on => row.IsEnabled = on;
-        row.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(PageRowViewModel.IsEnabled)) sw.IsOn = row.IsEnabled;
-            if (e.PropertyName == nameof(PageRowViewModel.ShakeToken)) sw.Shake();
-        };
-        SetColumn(sw, 2);
-        g.Children.Add(sw);
-        card.Child = g;
-        return card;
-    }
-}

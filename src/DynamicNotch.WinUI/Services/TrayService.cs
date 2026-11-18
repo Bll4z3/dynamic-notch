@@ -15,7 +15,7 @@ public sealed class TrayService : IDisposable
     private const uint NIF_MESSAGE = 1, NIF_ICON = 2, NIF_TIP = 4;
     private const uint MF_STRING = 0, MF_GRAYED = 1, MF_CHECKED = 8, MF_SEPARATOR = 0x800;
     private const uint TPM_RETURNCMD = 0x100, TPM_RIGHTBUTTON = 2, TPM_BOTTOMALIGN = 0x20;
-    private const int CmdSettings = 1, CmdMinimal = 2, CmdStartup = 3, CmdNotifications = 4, CmdQuit = 5;
+    private const int CmdSettings = 1, CmdMinimal = 2, CmdStartup = 3, CmdNotifications = 4, CmdQuit = 5, CmdUpdates = 6;
 
     private readonly WndProcDelegate _proc;
     private readonly IntPtr _hwnd;
@@ -29,6 +29,9 @@ public sealed class TrayService : IDisposable
     public event Action? NotificationAccessRequested;
     public event Action? QuitRequested;
     public event Action? SettingsRequested;
+    public event Action? UpdatesRequested;
+    /// <summary>Shows "Update ready" in the menu once a downloaded update is waiting.</summary>
+    public bool UpdateReady { get; set; }
 
     /// <summary>False greys the Settings item out (the app sets it once the Settings window is wired).</summary>
     public bool SettingsAvailable { get; set; }
@@ -94,6 +97,7 @@ public sealed class TrayService : IDisposable
     {
         IntPtr menu = CreatePopupMenu();
         AppendMenu(menu, MF_STRING | (SettingsAvailable ? 0 : MF_GRAYED), CmdSettings, "Settings…");
+        AppendMenu(menu, MF_STRING | (SettingsAvailable ? 0 : MF_GRAYED), CmdUpdates, UpdateReady ? "Update ready: restart to install" : "Check for updates…");
         AppendMenu(menu, MF_STRING | (_minimal ? MF_CHECKED : 0), CmdMinimal, "Minimal notch");
         AppendMenu(menu, MF_STRING | (_startup ? MF_CHECKED : 0), CmdStartup, "Start with Windows");
         if (_access is NotificationAccess.Denied or NotificationAccess.NoPackageIdentity)
@@ -118,6 +122,7 @@ public sealed class TrayService : IDisposable
             case CmdStartup: StartupToggled?.Invoke(!_startup); break;
             case CmdNotifications: NotificationAccessRequested?.Invoke(); break;
             case CmdQuit: QuitRequested?.Invoke(); break;
+            case CmdUpdates: UpdatesRequested?.Invoke(); break;
         }
     }
 

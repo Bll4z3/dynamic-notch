@@ -24,7 +24,7 @@ public sealed class SpringModel
 
     public SpringModel(SpringPreset preset, double initial = 0)
     {
-        Preset = preset;
+        Preset = Motion.Tune(preset);
         Target = initial;
     }
 
@@ -72,7 +72,7 @@ public sealed class SpringModel
         bool settled = IsSettledAt(now);
         if (target == Target && settled && preset == null) return false;
         var (x, v) = settled ? (Target, 0.0) : StateAt(now);
-        if (preset is { } p) Preset = p;
+        if (preset is { } p) Preset = Motion.Tune(p);
         Target = target;
         _x0 = x - target;
         _v0 = delay > 0 ? 0 : v;

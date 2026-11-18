@@ -16,9 +16,11 @@ public partial class App : Application
     private NotchWindow? _window;
     private DispatcherQueueTimer? _devCycle; // held: an unreferenced timer is collected and stops
     private DispatcherQueueTimer? _devOpen;
-    private DispatcherQueueTimer? _devPreview;
+    private DispatcherQueueTimer? _devPreview, _devPerf;
     private DispatcherQueueTimer? _devAsk;
     private DispatcherQueueTimer? _devToggle;
+    private DispatcherQueueTimer? _devActivity;
+    private DispatcherQueueTimer? _devCharge;
 
     public App(string[] args)
     {
@@ -48,11 +50,16 @@ public partial class App : Application
     {
         Ui.Initialize();
         Theme.Initialize();
-        Styles.Register(Resources);
-        Anim.RefreshSystemSetting();
-
         var settings = new SettingsService();
         settings.Load();
+        // The chosen UI font goes into Theme before any style or view is built.
+        var fonts = new FontService(settings);
+        fonts.ApplySaved();
+        // Customisation tokens (accent, radii, motion, surface) go into Theme before any view is built too.
+        var theme = new ThemeService(settings);
+        theme.ApplySaved();
+        Styles.Register(Resources);
+        Anim.RefreshSystemSetting();
 
         var media = Track(new MediaService());
         var clipboard = Track(new ClipboardService());
@@ -69,7 +76,18 @@ public partial class App : Application
         var secrets = new SecretStore();
         var claude = new ClaudeService(secrets);
         var focus = new FocusTimerViewModel(settings);
-        var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus);
+        var audio = Track(new AudioService());
+        var brightness = Track(new BrightnessService());
+        var downloads = Track(new DownloadWatcherService());
+        var quick = Track(new QuickActionsService());
+        var updates = Track(new UpdateService(settings));
+        var activity = new ActivityViewModel(settings);
+        var devices = new DevicesViewModel(bluetooth);
+        var wifi = new WifiService();
+        var btDevices = Track(new BluetoothDeviceService());
+        var hub = new HubViewModel(settings, quick, audio, brightness, notifications, wifi, btDevices, devices);
+        var sounds = new SoundService(theme, audio);
+        var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus, updates, fonts, theme, sounds);
 
         var vm = new MainViewModel(settings,
             new MusicViewModel(media),
@@ -77,26 +95,80 @@ public partial class App : Application
             new ShelfViewModel(shelf),
             new AskViewModel(claude, secrets),
             new StatusViewModel(clock, battery),
-            new DevicesViewModel(bluetooth),
+            devices,
             pages,
             notifications,
             new UsageViewModel(new ClaudeUsageService()),
-            focus);
+            focus,
+            activity,
+            hub);
 
         foreach (var src in new Action<Action<PillRequest>>[]
                  {
-                     h => network.Pill += h, h => vpn.Pill += h, h => bluetooth.Pill += h,
-                     h => power.Pill += h, h => notifications.Pill += h,
+                     h => network.Pill += h, h => vpn.Pill += h, h => bluetooth.Pill += h, h => notifications.Pill += h,
                  })
             src(vm.EnqueuePill);
 
+        // ---- Activity pills: every source feeds the ONE activity host ----
+        audio.VolumeChanged += v => activity.Show(new Activity(ActivityKind.Volume, "Volume", v.Level, On: v.Muted, OnSet: audio.SetVolume));
+        brightness.Changed += level => activity.Show(new Activity(ActivityKind.Brightness, "Brightness", level / 100.0,
+            OnSet: x => brightness.Set((int)Math.Round(x * 100))));
+        power.PlugChanged += (plugged, pct, estimate) =>
+        {
+            string title = plugged ? "Charging" : "On battery";
+            activity.Show(new Activity(ActivityKind.Charging, title, pct / 100.0, On: plugged, Subtitle: estimate));
+            hub.Record(new PillRequest(PillSource.Power, title, $"{pct}%", plugged ? Icons.Bolt : Icons.Battery));
+        };
+        power.LowBattery += pct =>
+        {
+            activity.Show(new Activity(ActivityKind.LowBattery, "Low battery", pct / 100.0, Subtitle: PowerService.Estimate(false) ?? "Plug in soon"));
+            hub.Record(new PillRequest(PillSource.Power, "Low battery", $"{pct}% remaining", Icons.BatteryLow));
+        };
+        downloads.Progress += d => ShowDownload(activity, hub, d);
+        downloads.Enabled = settings.Current.ShowDownloadPill;
+        settings.Changed += () => downloads.Enabled = settings.Current.ShowDownloadPill;
+
+        // ---- Updates: pill + history entry when found, progress while downloading, "Restart" when ready ----
+        updates.UpdateFound += info =>
+        {
+            string ver = info.Version.ToString(3);
+            Action get = () => _ = updates.GetUpdateAsync();
+            activity.Show(new Activity(ActivityKind.Update, "Update available", Subtitle: $"Version {ver}",
+                Value: UpdateService.CanInstallInPlace ? "Update" : "Get", OnClick: get));
+            hub.Record(new PillRequest(PillSource.System, "Update available", $"Dynamic Notch {ver} · click to update", Icons.UpdateArrow, OnClick: get));
+        };
+        updates.DownloadProgress += d => { if (!d.Done || d.Failed) ShowDownload(activity, hub, d); };
+        var lastStatus = updates.Status;
+        updates.Changed += () =>
+        {
+            if (_tray != null) _tray.UpdateReady = updates.Status == UpdateStatus.Ready;
+            if (updates.Status == UpdateStatus.Ready && lastStatus != UpdateStatus.Ready)
+                activity.Show(new Activity(ActivityKind.Update, "Update ready", Subtitle: "Click to restart and install", Value: "Restart",
+                    OnClick: updates.InstallAndRestart));
+            lastStatus = updates.Status;
+        };
+        updates.QuitRequested += Quit;
+
         _window = new NotchWindow(vm);
+        _window.AttachTheme(theme);
+        // Performance mode: Low power when chosen, or (auto) on battery saver and in remote desktop sessions.
+        void ApplyPower()
+        {
+            Motion.LowPower = theme.ResolveLowPower(quick.EnergySaverOn);
+            Views.Visualizer.FrameRate = Motion.LowPower ? 15 : Motion.VisualizerFps;
+        }
+        ApplyPower();
+        quick.Changed += ApplyPower;
+        theme.Changed += p => { if (p.HasFlag(ThemeService.Part.Performance)) ApplyPower(); };
+        WireSounds(sounds, vm, activity, power, settings);
         _window.ShowNotch();
         // Hide the notch while another app is fullscreen (Settings ▸ General).
         var fullscreen = Track(new FullscreenService(() => _window?.Handle ?? IntPtr.Zero));
         fullscreen.Changed += full => _window?.SetFullscreenHidden(full);
-        fullscreen.Enabled = settings.Current.HideWhenFullscreen;
-        settings.Changed += () => fullscreen.Enabled = settings.Current.HideWhenFullscreen;
+        // Dev: `--keep-visible` never hides for fullscreen apps (for testing while another app is fullscreen).
+        bool keepVisible = _args.Contains("--keep-visible", StringComparer.OrdinalIgnoreCase);
+        fullscreen.Enabled = settings.Current.HideWhenFullscreen && !keepVisible;
+        settings.Changed += () => fullscreen.Enabled = settings.Current.HideWhenFullscreen && !keepVisible;
         // Pages switched off in Settings stop their listeners; switching them back on restarts them.
         clipboard.SetListening(pages.IsEnabled(PageId.Clipboard));
         pages.Changed += () =>
@@ -127,25 +199,45 @@ public partial class App : Application
         // Global ← / → / Space / Esc while the notch is open or hovered, without ever taking focus.
         var keys = Track(new KeyboardHookService(DispatcherQueue.GetForCurrentThread()));
         keys.Start();
+        keys.PrimeCapsLock(); // only real changes from here on raise the pill
+        keys.CapsLockChanged += on => activity.Show(new Activity(ActivityKind.CapsLock, on ? "Caps Lock on" : "Caps Lock off", On: on));
         _window.AttachKeyboard(keys);
         // Settings (single window); the hook never intercepts keys while it is in front.
         vm.OpenSettingsRequested += () => Views.SettingsWindow.ShowSingle(settingsVm);
+        vm.OpenApiKeyRequested += () => { settingsVm.SelectApiKey(); Views.SettingsWindow.ShowSingle(settingsVm); };
         Views.SettingsWindow.HandleChanged += h => keys.PassThroughWindow = h;
+        // A new UI font: every open window refreshes its text with a short cross-fade (no restart).
+        fonts.FontChanged += previous =>
+        {
+            _window?.ApplyFont(previous);
+            Views.SettingsWindow.ApplyFont(previous);
+        };
 
-        // Tray
+        // Tray (Minimal notch and Start with Windows also live in Settings ▸ General; both stay in sync)
         _tray = new TrayService();
         _tray.SetMinimal(settings.Current.MinimalNotch);
-        _tray.MinimalToggled += on => vm.MinimalNotch = on;
-        _tray.StartupToggled += async on =>
+        void SetMinimal(bool on) { vm.MinimalNotch = on; _tray?.SetMinimal(on); settingsVm.General.RefreshToggles(); }
+        async void SetStartup(bool on)
         {
             bool result = await StartupService.SetEnabledAsync(on);
             settings.Update(s => s.StartWithWindows = result);
-            _tray.SetStartup(result);
-        };
+            _tray?.SetStartup(result);
+            settingsVm.General.RefreshToggles();
+        }
+        _tray.MinimalToggled += SetMinimal;
+        _tray.StartupToggled += SetStartup;
+        settingsVm.General.MinimalChanged += SetMinimal;
+        settingsVm.General.StartupChanged += SetStartup;
         _tray.NotificationAccessRequested += NotificationService.OpenPermissionSettings;
         _tray.QuitRequested += Quit;
         _tray.SettingsAvailable = true;
         _tray.SettingsRequested += () => Views.SettingsWindow.ShowSingle(settingsVm);
+        _tray.UpdatesRequested += () =>
+        {
+            settingsVm.SelectUpdates();
+            Views.SettingsWindow.ShowSingle(settingsVm);
+            if (updates.Status is not (UpdateStatus.Ready or UpdateStatus.Downloading)) _ = updates.CheckAsync(manual: true);
+        };
         notifications.AccessChanged += a => Ui.Post(() => _tray?.SetNotificationAccess(a));
 
         // Start everything (all event-driven).
@@ -155,6 +247,10 @@ public partial class App : Application
         vpn.Start();
         bluetooth.Start();
         power.Start();
+        audio.Start();
+        brightness.Start();
+        updates.Start();
+        _ = quick.StartAsync();
         if (pages.IsEnabled(PageId.Music)) await media.StartAsync();
         _tray.SetStartup(await StartupService.IsEnabledAsync());
         await notifications.StartAsync();
@@ -184,12 +280,36 @@ public partial class App : Application
             t.Tick += (_, _) => _window?.ShowFirstPreview();
             t.Start();
         }
+        // Dev: `--perf-all` measures startup, then (after a 25 s idle window for external CPU sampling) the
+        // expand, every page switch, both popups, the clipboard preview and the collapse, into perf.log.
+        if (_args.Contains("--perf-all", StringComparer.OrdinalIgnoreCase)) StartPerfRun(vm);
+        if (_args.Contains("--perf-overlay", StringComparer.OrdinalIgnoreCase)) Views.PerfOverlay.Show();
+        // Dev: `--perf-popovers` opens page 4 and opens/closes the Bluetooth and Wi-Fi popups a few times,
+        // writing click → frame → list timings to %LocalAppData%\DynamicNotch\perf.log.
+        if (_args.Contains("--perf-popovers", StringComparer.OrdinalIgnoreCase))
+        {
+            PerfLog.Enabled = true;
+            _window.DevHoldOpen = true;
+            var t = _devPerf = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            int step = 0;
+            t.Interval = TimeSpan.FromMilliseconds(1800);
+            t.Tick += (_, _) =>
+            {
+                var hub = _window?.DevHub;
+                if (hub == null) return;
+                int s = step++;
+                if (s == 0) { _window!.PinOpen(Math.Max(0, vm.Pages.IndexOf(PageId.Hub))); return; }
+                if (s > 16) { hub.ClosePopover(); t.Stop(); return; }
+                if (s % 2 == 1) hub.DevOpenPopover(bluetooth: s <= 8); else hub.ClosePopover();
+            };
+            t.Start();
+        }
         // Dev: `--settings [pages]` opens the Settings window (on the Pages tab with `pages`).
         int settingsArg = Array.FindIndex(_args, a => a.Equals("--settings", StringComparison.OrdinalIgnoreCase));
         if (settingsArg >= 0)
         {
             string tab = settingsArg + 1 < _args.Length ? _args[settingsArg + 1].ToLowerInvariant() : "";
-            int tabIndex = tab switch { "pages" => 1, "focus" => 2, "general" => 3, _ => 0 };
+            int tabIndex = tab switch { "custom" => 1, "key" => 2, "pages" => 3, "pills" => 4, "focus" => 5, "updates" => 6, _ => 0 };
             settingsVm.SelectedTab = settingsVm.Tabs[tabIndex];
             Views.SettingsWindow.ShowSingle(settingsVm);
         }
@@ -259,6 +379,168 @@ public partial class App : Application
             vm.EnqueuePill(new PillRequest(PillSource.Power, "Charging", "64%", Icons.Bolt, Badge: "64%"));
             vm.EnqueuePill(new PillRequest(PillSource.App, "Alex", "Are we still on for 7?", Icons.Bell, AppName: "Messages"));
         }
+
+        // Dev: `--charge-demo` flips the notch's own battery between charging and not every 6 s, with the matching pills.
+        if (_args.Contains("--charge-demo", StringComparer.OrdinalIgnoreCase))
+        {
+            bool plugged = false;
+            var ct = _devCharge = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            ct.Interval = TimeSpan.FromSeconds(6);
+            ct.Tick += (_, _) =>
+            {
+                plugged = !plugged;
+                vm.Status.DevSetCharging(plugged);
+                double pct = Math.Max(0, vm.Status.BatteryPercent) / 100.0;
+                activity.Show(new Activity(ActivityKind.Charging, plugged ? "Charging" : "On battery", pct, On: plugged, Subtitle: plugged ? "1 h 40 min until full" : "2 h 10 min left"));
+            };
+            ct.Start();
+        }
+
+        // Dev: `--activity-demo [kind]` plays each activity pill in turn (or one kind repeatedly), all local and fake:
+        // nothing is read from or changed on the PC.
+        int actDemo = Array.FindIndex(_args, a => a.Equals("--activity-demo", StringComparison.OrdinalIgnoreCase));
+        if (actDemo >= 0)
+        {
+            string only = actDemo + 1 < _args.Length ? _args[actDemo + 1].ToLowerInvariant() : "";
+            var steps = new List<(string kind, Action show)>
+            {
+                ("volume", () => activity.Show(new Activity(ActivityKind.Volume, "Volume", 0.35, OnSet: _ => { }))),
+                ("volume", () => activity.Show(new Activity(ActivityKind.Volume, "Volume", 0.72, OnSet: _ => { }))),
+                ("brightness", () => activity.Show(new Activity(ActivityKind.Brightness, "Brightness", 0.6, OnSet: _ => { }))),
+                ("caps", () => activity.Show(new Activity(ActivityKind.CapsLock, "Caps Lock on", On: true))),
+                ("caps", () => activity.Show(new Activity(ActivityKind.CapsLock, "Caps Lock off", On: false))),
+                ("charging", () => activity.Show(new Activity(ActivityKind.Charging, "Charging", 0.64, On: true, Subtitle: "1 h 10 min until full"))),
+                ("download", () => activity.Show(new Activity(ActivityKind.Download, "Quarterly report.pdf", null, "12.4 MB", Subtitle: "12.4 MB", Key: "demo"))),
+                ("download", () => activity.Show(new Activity(ActivityKind.Download, "Downloaded", null, "", On: true, Subtitle: "Quarterly report.pdf", Key: "demo"))),
+                ("update", () => activity.Show(new Activity(ActivityKind.Update, "Update available", Subtitle: "Version 2.2.0", Value: "Update"))),
+                ("lowbattery", () => activity.Show(new Activity(ActivityKind.LowBattery, "Low battery", 0.12, Subtitle: "25 min left"))),
+            };
+            if (only.Length > 0 && !only.StartsWith("-")) steps = steps.Where(s => s.kind == only).ToList();
+            vm.Hub.Record(new PillRequest(PillSource.Device, "WH-1000XM5", "Connected · 80%", Icons.Headphone));
+            vm.Hub.Record(new PillRequest(PillSource.Network, "Wi-Fi connected", "Home-5G", Icons.Wifi));
+            vm.Hub.Record(new PillRequest(PillSource.App, "Alex", "Are we still on for 7?", Icons.Bell, AppName: "Messages"));
+            int i = 0;
+            var t = _devActivity = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            t.Interval = TimeSpan.FromMilliseconds(2600);
+            t.Tick += (_, _) => { if (steps.Count > 0) steps[i++ % steps.Count].show(); };
+            t.Start();
+        }
+    }
+
+    /// <summary>Notch events → sounds (each plays only if sounds are on, the preset isn't Off and the event is enabled).</summary>
+    private void WireSounds(SoundService sounds, MainViewModel vm, ActivityViewModel activity, PowerService power, SettingsService settings)
+    {
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(MainViewModel.PageIndex) && _window?.IsExpanded == true) sounds.Play("page"); };
+        if (_window != null)
+            _window.StateChanged += (prev, next) =>
+            {
+                if (next == NotchState.Expanded) sounds.Play("expand");
+                else if (prev == NotchState.Expanded && next == NotchState.Collapsed) sounds.Play("collapse");
+            };
+        vm.PillAccepted += p => sounds.Play(p.Source == PillSource.App ? "notification" : "pill");
+        activity.Updated += (a, sameKind) =>
+        {
+            switch (a.Kind)
+            {
+                case ActivityKind.CapsLock: sounds.Play(a.On ? "capson" : "capsoff"); break;
+                case ActivityKind.Charging when !sameKind: sounds.Play(a.On ? "plug" : "unplug"); break;
+                case ActivityKind.LowBattery when !sameKind: sounds.Play("lowbattery"); break;
+                case ActivityKind.Update when !sameKind && a.Title.StartsWith("Update available"): sounds.Play("update"); break;
+                case ActivityKind.Volume or ActivityKind.Brightness: sounds.Play("tick"); break; // throttled to ≥ 120 ms
+                case ActivityKind.Download when !sameKind && !a.On: sounds.Play("pill"); break;
+            }
+        };
+        vm.Ask.SoundCue += sounds.Play;
+        Views.PillSwitch.UserToggled += on => sounds.Play(on ? "toggleon" : "toggleoff");
+        Views.PopRow.AnyFailed += () => sounds.Play("error");
+    }
+
+    private DispatcherQueueTimer? _devPerfAll;
+
+    /// <summary>Dev (`--perf-all`): startup time, a quiet idle window, then each animation traced in perf.log.</summary>
+    private void StartPerfRun(MainViewModel vm)
+    {
+        PerfLog.Enabled = true;
+        _window!.DevHoldOpen = true;
+        EventHandler<object>? first = null;
+        first = (_, _) =>
+        {
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= first;
+            double ms = (DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalMilliseconds;
+            PerfLog.Note($"startup: first frame {ms:0} ms after process start");
+        };
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += first;
+
+        var steps = new List<(string name, Action act)>();
+        steps.Add(("#IDLE-START (collapsed, 25 s)", () => { }));
+        for (int k = 0; k < 16; k++) steps.Add(("", () => { })); // 16 × 1.6 s ≈ 25 s of idle
+        steps.Add(("#IDLE-END", () => { }));
+        steps.Add(("Expand (collapsed → open)", () => _window?.PinOpen(0)));
+        steps.Add(("#MUSIC-START (expanded music page, 10 s)", () => { }));
+        for (int k = 0; k < 6; k++) steps.Add(("", () => { }));
+        steps.Add(("#MUSIC-END", () => { }));
+        int n = vm.Pages.Enabled.Count;
+        for (int p = 1; p < n; p++)
+        {
+            int to = p;
+            steps.Add(($"Page switch {vm.Pages.Enabled[to - 1]} → {vm.Pages.Enabled[to]}", () => vm.PageIndex = to));
+        }
+        int hub = vm.Pages.Enabled.ToList().IndexOf(PageId.Hub);
+        if (hub >= 0)
+        {
+            steps.Add(($"Page switch → Hub", () => vm.PageIndex = hub));
+            steps.Add(("!Bluetooth", () => _window?.DevHub.DevOpenPopover(true)));
+            steps.Add(("-close", () => _window?.DevHub.ClosePopover()));
+            steps.Add(("!Wi-Fi", () => _window?.DevHub.DevOpenPopover(false)));
+            steps.Add(("-close", () => _window?.DevHub.ClosePopover()));
+        }
+        int clip = vm.Pages.Enabled.ToList().IndexOf(PageId.Clipboard);
+        if (clip >= 0)
+        {
+            steps.Add(($"Page switch → Clipboard", () => vm.PageIndex = clip));
+            steps.Add(("Clipboard hover preview", () => _window?.ShowFirstPreview()));
+        }
+        steps.Add(("Collapse (open → collapsed)", () => _window?.DevToggle()));
+        steps.Add(("#DONE", () => { }));
+
+        int i = 0;
+        var t = _devPerfAll = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        t.Interval = TimeSpan.FromMilliseconds(1600);
+        t.Tick += (_, _) =>
+        {
+            if (i >= steps.Count) { t.Stop(); return; }
+            var (name, act) = steps[i++];
+            if (name.StartsWith("#")) { PerfLog.End(); PerfLog.Note(name[1..]); act(); return; }
+            if (name == "") return;
+            if (name.StartsWith("-")) { act(); return; }        // popup traces end on their own Closed
+            if (!name.StartsWith("!")) PerfLog.Begin(name);    // popup opens begin their own trace
+            act();
+        };
+        t.Start();
+    }
+
+    /// <summary>A download's progress / result as an activity pill (and a history entry when it finishes).</summary>
+    private static void ShowDownload(ActivityViewModel activity, HubViewModel hub, DownloadInfo d)
+    {
+        string value = d.Done ? "" : d.Fraction is { } f ? $"{f * 100:0}%" : FormatBytes(d.Received);
+        Action? open = d.FinalPath is { } path ? () => RevealInExplorer(path) : null;
+        string title = d.Done ? d.Failed ? "Download failed" : "Downloaded" : d.Name;
+        activity.Show(new Activity(ActivityKind.Download, title, d.Fraction, value, On: d.Done, Subtitle: d.Done ? d.Name : FormatBytes(d.Received),
+            Failed: d.Failed, OnClick: open, Key: d.Key));
+        if (d.Done && !d.Failed && d.FinalPath != null) hub.Record(new PillRequest(PillSource.System, "Downloaded", d.Name, Icons.Download, OnClick: open));
+    }
+
+    private static string FormatBytes(long b) => b switch
+    {
+        >= 1L << 30 => $"{b / (double)(1L << 30):0.0} GB",
+        >= 1L << 20 => $"{b / (double)(1L << 20):0.0} MB",
+        >= 1L << 10 => $"{b / 1024.0:0} KB",
+        _ => $"{b} B",
+    };
+
+    private static void RevealInExplorer(string path)
+    {
+        try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\""); } catch { }
     }
 
     /// <summary>Dev: a canned streamed answer (or a canned failure), chunk by chunk, entirely local.</summary>

@@ -146,6 +146,31 @@ public sealed class PillButton : Grid
 
     /// <summary>False = 40% opacity (still clickable; the command ignores it).</summary>
     public bool Active { set => Opacity = value ? 1 : 0.4; }
+
+    /// <summary>Draws the pill in the accent (the Ask Send pill), with auto-contrast text; follows accent changes live.</summary>
+    public bool UseAccent
+    {
+        set
+        {
+            if (!value) return;
+            _back.Background = Theme.AccentBrush;
+            _back.BorderThickness = new Thickness(0);
+            _icon.Foreground = Theme.OnAccentBrush;
+            _label.Foreground = Theme.OnAccentBrush;
+        }
+    }
+
+    /// <summary>Small pills (24 px rows): caption-size label and icon, tighter sides.</summary>
+    public bool Compact
+    {
+        set
+        {
+            if (!value) return;
+            _label.FontSize = Theme.FontCaption;
+            _icon.Size = Theme.IconSmall - 3;
+            if (_label.Parent is StackPanel row) row.Margin = new Thickness(Theme.S3, 0, Theme.S3, 0);
+        }
+    }
 }
 
 /// <summary>Text button (the WPF TextButton style): a capsule hover fill that springs in, press squash.</summary>

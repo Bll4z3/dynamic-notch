@@ -13,18 +13,45 @@ namespace DynamicNotch.Design;
 /// </summary>
 public static class Theme
 {
-    // ---- Shape -------------------------------------------------------------------------------
-    /// <summary>The ONE corner radius used by every shape in the app (clamped to half the height of small shapes).</summary>
-    public const double CornerRadius = 22;
-    public static readonly Microsoft.UI.Xaml.CornerRadius Radius = new(CornerRadius);
+    // ---- Shape (live tokens: Settings ▸ Customisation ▸ Shape) ---------------------------------
+    /// <summary>Default notch corner radius, and the slider's range.</summary>
+    public const double DefaultCornerRadius = 22, MinCornerRadius = 8, MaxCornerRadius = 40;
+    /// <summary>Default tile / card radius (≈ 0.5 × the notch radius), and the slider's range.</summary>
+    public const double DefaultCornerRadiusSmall = 11, MinCornerRadiusSmall = 4, MaxCornerRadiusSmall = 24;
+
+    /// <summary>The ONE corner radius used by the notch and its large shapes (clamped to half the height of small shapes).</summary>
+    public static double CornerRadius { get; private set; } = DefaultCornerRadius;
     /// <summary>
-    /// The ONE small radius, used only for the Ask screenshot thumbnail, clipboard tiles (and their
-    /// overlay buttons) and the clipboard preview card. Pills don't use a fixed radius at all:
-    /// their corners are always half their height.
+    /// The ONE small radius: tiles, rows, cards, popups, thumbnails. Pills and switches don't use a fixed
+    /// radius at all: their corners are always half their height, and the sliders never touch them.
     /// </summary>
-    public const double CornerRadiusSmall = 11;
-    public static readonly Microsoft.UI.Xaml.CornerRadius RadiusSmall = new(CornerRadiusSmall);
-    /// <summary>How far the notch's continuous (squircle-style) corners extend beyond a circular arc (WPF only; see README).</summary>
+    public static double CornerRadiusSmall { get; private set; } = DefaultCornerRadiusSmall;
+
+    // Every CornerRadius handed out by Radius / RadiusSmall carries an exact, invisible tag in its fraction
+    // (1/512 or 2/512 of a pixel) so a live radius change can find exactly the shapes that use a token and
+    // leave everything else (pills: height / 2, fixed-size chips) alone. See ThemeService.RefreshRadii.
+    internal const double RadiusTagUnit = 1.0 / 512;
+    internal const int LargeTag = 1, SmallTag = 2;
+    public static Microsoft.UI.Xaml.CornerRadius Radius => new(CornerRadius + LargeTag * RadiusTagUnit);
+    public static Microsoft.UI.Xaml.CornerRadius RadiusSmall => new(CornerRadiusSmall + SmallTag * RadiusTagUnit);
+
+    /// <summary>Which token a corner value came from (0 = none).</summary>
+    internal static int RadiusTagOf(double v)
+    {
+        double units = v / RadiusTagUnit;
+        long whole = (long)Math.Round(units);
+        if (Math.Abs(units - whole) > 1e-6) return 0;
+        int t = (int)(whole % 512);
+        return t is LargeTag or SmallTag ? t : 0;
+    }
+
+    internal static void SetRadii(double large, double small)
+    {
+        CornerRadius = Math.Round(Math.Clamp(large, MinCornerRadius, MaxCornerRadius));
+        CornerRadiusSmall = Math.Round(Math.Clamp(small, MinCornerRadiusSmall, MaxCornerRadiusSmall));
+    }
+
+    /// <summary>How far the notch's continuous (squircle-style) corners extend beyond a circular arc.</summary>
     public const double CornerSmoothing = 0.6;
 
     // ---- Spacing scale (4 / 8 / 12 / 16 / 20) ------------------------------------------------
@@ -59,7 +86,13 @@ public static class Theme
 
     // ---- Colours: neutral greys on black + one accent ----------------------------------------
     public static readonly Color NotchColor = Rgb(0, 0, 0);
-    public static readonly Color AccentColor = Rgb(0x0A, 0x84, 0xFF);
+    /// <summary>The default accent (pink: the navigator's original active colour).</summary>
+    public static readonly Color DefaultAccent = Rgb(0xFF, 0x37, 0x5F);
+    /// <summary>The live accent (Settings ▸ Customisation ▸ Accent). Interactive and selected states only;
+    /// semantic colours (battery, charging, Caps Lock, error, success) never follow it.</summary>
+    public static Color AccentColor { get; private set; } = DefaultAccent;
+    /// <summary>Text / icons drawn on the accent (black or white, whichever has the better WCAG contrast).</summary>
+    public static Color OnAccentColor { get; private set; } = Rgb(0xFF, 0xFF, 0xFF);
     public static readonly Color PrimaryTextColor = Rgb(0xF5, 0xF5, 0xF7);
     public static readonly Color SecondaryTextColor = Rgb(0xA1, 0xA1, 0xA6);
     public static readonly Color TertiaryTextColor = Rgb(0x6E, 0x6E, 0x73);
@@ -74,10 +107,16 @@ public static class Theme
     public static readonly Color DropHighlightColor = Argb(0x55, 0xFF, 0xFF, 0xFF);
     public static readonly Color DropZoneColor = Argb(0x40, 0xFF, 0xFF, 0xFF);
     public static readonly Color OverlayButtonColor = Argb(0xE6, 0x0C, 0x0C, 0x0E);
-    /// <summary>1px inner highlight along the notch's sides and bottom (~8% white). The top edge stays pure black.</summary>
-    public static readonly Color HighlightColor = Argb(0x14, 0xFF, 0xFF, 0xFF);
+    /// <summary>1px inner highlight along the notch's sides and bottom (default ~8% white; live: Settings ▸ Notch look). The top edge stays pure black.</summary>
+    public static Color HighlightColor => Argb((byte)Math.Round(255 * HighlightStrength), 0xFF, 0xFF, 0xFF);
+    /// <summary>Border highlight strength, 0..0.2 (default 0.08).</summary>
+    public static double HighlightStrength { get; internal set; } = DefaultHighlight;
+    public const double DefaultHighlight = 0x14 / 255.0;
+    /// <summary>Multiplies every shadow's opacity (0..1.5, default 1).</summary>
+    public static double ShadowIntensity { get; internal set; } = 1;
     /// <summary>Soft shadow under the notch (compositor drop shadow; fits inside <see cref="ShadowMargin"/>).</summary>
-    public const double ShadowBlur = 16, ShadowOffsetY = 4, ShadowOpacity = 0.5;
+    public const double ShadowBlur = 16, ShadowOffsetY = 4, BaseShadowOpacity = 0.5;
+    public static double ShadowOpacity => BaseShadowOpacity * ShadowIntensity;
     /// <summary>Extra clickable/drawn band under the expanded notch so its shadow isn't cut off.</summary>
     public const double ShadowMargin = 16;
     public const double DropZoneDash = 4, DropZoneThickness = 1.5;
@@ -127,8 +166,8 @@ public static class Theme
     public static readonly GridLength HeaderRow = new(HeaderHeight), FooterRow = new(FooterHeight);
     /// <summary>Extra room around the notch inside the host window for the soft shadow.</summary>
     public const double ShadowRoom = 40;
-    /// <summary>Window host size: big enough for the expanded notch plus its shoulders and shadow.</summary>
-    public const double HostWidth = ExpandedWidth + 2 * CornerRadius + 2 * ShadowRoom, HostHeight = ExpandedMaxHeight + ShadowRoom;
+    /// <summary>Window host size: big enough for the expanded notch plus its shoulders (at the largest radius) and shadow.</summary>
+    public const double HostWidth = ExpandedWidth + 2 * MaxCornerRadius + 2 * ShadowRoom, HostHeight = ExpandedMaxHeight + ShadowRoom;
     /// <summary>Near-invisible hover strip so the minimal (6px) notch is easy to reach.</summary>
     public const double HoverStripHeight = 14, HoverStripExtra = 60;
 
@@ -178,7 +217,7 @@ public static class Theme
     public const double SelectionStrokeThickness = 2, SelectionDash = 4;
 
     // ---- Settings window -------------------------------------------------------------------------
-    public const double SettingsWidth = 640, SettingsHeight = 480, SettingsTabWidth = 180, SettingsTabHeight = 36;
+    public const double SettingsWidth = 780, SettingsHeight = 540, SettingsMinWidth = 640, SettingsMinHeight = 420, SettingsTabWidth = 180, SettingsTabHeight = 36;
     public static readonly Thickness SettingsPadding = new(S5);
     public static readonly Thickness SettingsTabPadding = new(S3, S4, S3, S4);
     public const double SettingsShadowRoom = 24;
@@ -194,6 +233,11 @@ public static class Theme
     public static readonly Color SwitchThumbOnColor = Rgb(0x0A, 0x0A, 0x0C);
     public static readonly Color SwitchThumbOffColor = Rgb(0xF5, 0xF5, 0xF7);
     public const double PageRowHeight = 56, PageIconTile = 36;
+    /// <summary>Font picker (Settings ▸ General): option row height and the dropdown's tallest size.</summary>
+    public const double FontItemHeight = 34, FontListMaxHeight = 280;
+    /// <summary>Pages tab reordering: the grip's hit width, switched-off rows' dimming, the lifted row's shadow.</summary>
+    public const double GripHitWidth = 26, DisabledRowOpacity = 0.5;
+    public const double RowLiftShadowBlur = 18, RowLiftShadowOffsetY = 6, RowLiftShadowOpacity = 0.6;
     public static readonly Thickness PageRowMargin = new(0, 0, 0, S2);
     public static readonly Thickness PageRowPadding = new(S3, S2, S3, S2);
 
@@ -246,6 +290,49 @@ public static class Theme
     public const double TimerControlHeight = 36, TimerPanelWidth = 330;
     public const double CollapsedTimerDot = 6;
 
+    // ---- Activity pills (volume, brightness, Caps Lock, charging, downloads, updates) -----------------
+    /// <summary>Height of the activity pill the collapsed notch grows into, and of its slim twin in the open notch.</summary>
+    public const double ActivityHeight = 44, ActivityCompactHeight = 30;
+    /// <summary>Pill width per kind (the notch springs between them when one activity replaces another).</summary>
+    public const double ActivityWidthSlider = 320, ActivityWidthCaps = 300, ActivityWidthBattery = 330,
+                        ActivityWidthDownload = 360, ActivityWidthUpdate = 340, ActivityCompactWidth = 216;
+    public static readonly Thickness ActivityPadding = new(S4, 0, S4, 0), ActivityCompactPadding = new(S3, 0, S3, 0);
+    public const double ActivityIconBox = 26, ActivityIconSize = 20, ActivityCompactIconSize = 16;
+    public const double ActivityTrackHeight = 6, ActivityThumbSize = 14;
+    public const double ActivityValueWidth = 44;
+    public const double FontActivityTitle = 13, FontActivityValue = 14, FontActivityGlyph = 20;
+    public static readonly Color VolumeColor = Rgb(0xF5, 0xF5, 0xF7);
+    public static readonly Color VolumeMutedColor = Argb(0x59, 0xF5, 0xF5, 0xF7);
+    public static readonly Color BrightnessColor = Rgb(0xFF, 0xC2, 0x4D);
+    public static readonly Color CapsOnColor = Rgb(0xFF, 0xB0, 0x20);
+    public static readonly Color ChargingColor = Rgb(0x32, 0xD7, 0x4B);
+    public static readonly Color DownloadColor = Rgb(0x0A, 0x84, 0xFF);
+    public static readonly Color UpdateColor = Rgb(0xA8, 0x6B, 0xFF);
+    /// <summary>Soft coloured glow behind an activity icon (Caps Lock on, charging).</summary>
+    public const double ActivityGlowSize = 44, ActivityGlowOpacity = 0.5, UnpluggedGlowOpacity = 0.18;
+    /// <summary>The charging halo around the collapsed notch's battery ring (multiple of the ring size).</summary>
+    public const double ChargeHaloScale = 1.9, ChargeHaloOpacity = 0.55;
+
+    // ---- Page: Notifications + Quick actions -------------------------------------------------------
+    public const double HubRowMinHeight = 46, HubRowIcon = 28, HubTileHeight = 52, HubSliderHeight = 28, HubHeaderHeight = 20;
+    public static readonly Thickness HubRowPadding = new(S2, 6, S2, 6);
+    public const int HubHistoryMax = 60;
+    public const double HubRowGap = 6, HubSmallPillHeight = 24, ClearPillMinWidth = 78;
+    /// <summary>The soft highlight that sweeps down behind rows as Clear all removes them.</summary>
+    public const double SweepHeight = 90;
+    public static readonly Color SweepColor = Argb(0x16, 0xFF, 0xFF, 0xFF);
+
+    // ---- Quick-action popovers (Wi-Fi, Bluetooth) --------------------------------------------------------
+    public static readonly Thickness PopoverPadding = new(S3, S3, S3, S2);
+    public const double PopoverIconTile = 28, PopRowHeight = 44, PopoverDimOpacity = 0.55;
+    public const double PopoverShadowBlur = 24, PopoverShadowOffsetY = 8, PopoverShadowOpacity = 0.7;
+    /// <summary>The connected network / device row's faint fill.</summary>
+    public static readonly Color PopRowActiveColor = Argb(0x14, 0xFF, 0xFF, 0xFF);
+    public const double PasswordBoxHeight = 32;
+    public static readonly Color TileActiveColor = Rgb(0xF5, 0xF5, 0xF7);
+    public static readonly Color TileActiveIconColor = Rgb(0x0A, 0x0A, 0x0C);
+    public const double FontTileLabel = 10;
+
     // ---- XAML objects (UI thread) ----------------------------------------------------------------
     public static SolidColorBrush NotchBrush { get; private set; } = null!;
     public static SolidColorBrush PrimaryText { get; private set; } = null!;
@@ -255,7 +342,47 @@ public static class Theme
     public static SolidColorBrush TileBorderBrush { get; private set; } = null!;
     public static SolidColorBrush CardHoverBrush { get; private set; } = null!;
     public static SolidColorBrush TrackBrush { get; private set; } = null!;
+    /// <summary>Shared accent brushes: mutated in place, so everything drawn with them follows a change live.</summary>
     public static SolidColorBrush AccentBrush { get; private set; } = null!;
+    /// <summary>The accent, a little lighter (hover / pressed on accent surfaces).</summary>
+    public static SolidColorBrush AccentHoverBrush { get; private set; } = null!;
+    /// <summary>A low-alpha accent tint (selected rows, the Settings tab highlight, active-row fills).</summary>
+    public static SolidColorBrush AccentSubtleBrush { get; private set; } = null!;
+    /// <summary>Text / icons on the accent (auto black or white for WCAG AA contrast).</summary>
+    public static SolidColorBrush OnAccentBrush { get; private set; } = null!;
+    /// <summary>Raised (UI thread) whenever the accent colour changes, including every frame of a cross-fade.
+    /// Composition brushes and cached colours update here; keep handlers trivial.</summary>
+    public static event Action? AccentChanged;
+
+    /// <summary>Applies an accent colour right now (ThemeService calls this per frame while cross-fading).</summary>
+    public static void ApplyAccent(Color c)
+    {
+        AccentColor = c;
+        OnAccentColor = OnColorFor(c);
+        if (AccentBrush == null) return;
+        AccentBrush.Color = c;
+        AccentHoverBrush.Color = Lerp(c, Rgb(0xFF, 0xFF, 0xFF), 0.18);
+        AccentSubtleBrush.Color = Color.FromArgb(0x2E, c.R, c.G, c.B);
+        OnAccentBrush.Color = OnAccentColor;
+        AccentChanged?.Invoke();
+    }
+
+    /// <summary>WCAG relative luminance (0..1).</summary>
+    public static double Luminance(Color c)
+    {
+        static double Ch(byte v) { double s = v / 255.0; return s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4); }
+        return 0.2126 * Ch(c.R) + 0.7152 * Ch(c.G) + 0.0722 * Ch(c.B);
+    }
+
+    public static double Contrast(Color a, Color b)
+    {
+        double la = Luminance(a), lb = Luminance(b);
+        return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
+    }
+
+    /// <summary>Black or white, whichever reads better on <paramref name="c"/>.</summary>
+    public static Color OnColorFor(Color c) =>
+        Contrast(c, Rgb(0x0A, 0x0A, 0x0C)) >= Contrast(c, Rgb(0xFF, 0xFF, 0xFF)) ? Rgb(0x0A, 0x0A, 0x0C) : Rgb(0xFF, 0xFF, 0xFF);
     public static SolidColorBrush TransparentBrush { get; private set; } = null!;
     public static SolidColorBrush CardBrush { get; private set; } = null!;
     public static SolidColorBrush CardBorderBrush { get; private set; } = null!;
@@ -296,6 +423,9 @@ public static class Theme
         CardHoverBrush = new SolidColorBrush(CardHoverColor);
         TrackBrush = new SolidColorBrush(TrackColor);
         AccentBrush = new SolidColorBrush(AccentColor);
+        AccentHoverBrush = new SolidColorBrush(AccentColor);
+        AccentSubtleBrush = new SolidColorBrush(AccentColor);
+        OnAccentBrush = new SolidColorBrush(OnAccentColor);
         TransparentBrush = new SolidColorBrush(Argb(0, 0, 0, 0));
         CardBrush = new SolidColorBrush(CardColor);
         CardBorderBrush = new SolidColorBrush(CardBorderColor);
@@ -313,6 +443,7 @@ public static class Theme
         QuestionCardBrush = new SolidColorBrush(QuestionCardColor);
         QuestionTextBrush = new SolidColorBrush(QuestionTextColor);
         MonoFont = new FontFamily("Cascadia Mono, Consolas");
+        ApplyAccent(AccentColor);
 
         Font = InterFile("Regular");
         FontMedium = InterFile("Medium");
@@ -329,9 +460,39 @@ public static class Theme
             : new FontFamily("Segoe UI Variable Text, Segoe UI");
     }
 
-    /// <summary>The Inter file for a weight (Bold, SemiBold, Medium, else Regular).</summary>
+    /// <summary>The UI font's family for a weight (Bold, SemiBold, Medium, else Regular).</summary>
     public static FontFamily FontFor(FontWeight w) =>
         w.Weight >= 700 ? FontBold : w.Weight >= 600 ? FontSemiBold : w.Weight >= 500 ? FontMedium : Font;
+
+    /// <summary>The default UI font (Inter, falling back to Segoe UI Variable) at a weight.</summary>
+    public static FontFamily DefaultFontFor(string weight) => InterFile(weight);
+
+    /// <summary>
+    /// Whether the chosen UI font draws digits at a fixed width (its tabular figures, or digits that are
+    /// equal-width by design). When it doesn't, numbers (clock, times, percentages) are drawn with the
+    /// default font's tabular digits instead so they never jitter.
+    /// </summary>
+    public static bool UiDigitsTabular { get; private set; } = true;
+
+    private static FontFamily? _numRegular, _numMedium, _numSemiBold, _numBold;
+
+    /// <summary>The family used for numbers at a weight (the UI font, or Inter when it lacks tabular digits).</summary>
+    public static FontFamily NumberFontFor(FontWeight w)
+    {
+        if (UiDigitsTabular) return FontFor(w);
+        return w.Weight >= 700 ? _numBold ??= InterFile("Bold") : w.Weight >= 600 ? _numSemiBold ??= InterFile("SemiBold")
+             : w.Weight >= 500 ? _numMedium ??= InterFile("Medium") : _numRegular ??= InterFile("Regular");
+    }
+
+    /// <summary>Replaces the UI font set (FontService). Views pick it up through Styles and a tree refresh.</summary>
+    public static void SetFonts(FontFamily regular, FontFamily medium, FontFamily semiBold, FontFamily bold, bool digitsTabular)
+    {
+        Font = regular;
+        FontMedium = medium;
+        FontSemiBold = semiBold;
+        FontBold = bold;
+        UiDigitsTabular = digitsTabular;
+    }
 
     public static Color BatteryColor(double percent) =>
         percent > BatteryHighPercent ? BatteryGreen : percent > BatteryLowPercent ? BatteryAmber : BatteryRed;

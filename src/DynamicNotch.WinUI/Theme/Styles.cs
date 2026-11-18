@@ -55,7 +55,7 @@ public static class Styles
     private static Style Text(Style? basedOn, double size, FontWeight weight, Brush foreground, bool trim, bool tabular = false)
     {
         var s = new Style(typeof(TextBlock)) { BasedOn = basedOn };
-        s.Setters.Add(new Setter(TextBlock.FontFamilyProperty, Theme.FontFor(weight)));
+        s.Setters.Add(new Setter(TextBlock.FontFamilyProperty, tabular ? Theme.NumberFontFor(weight) : Theme.FontFor(weight)));
         s.Setters.Add(new Setter(TextBlock.FontSizeProperty, size));
         s.Setters.Add(new Setter(TextBlock.FontWeightProperty, weight));
         s.Setters.Add(new Setter(TextBlock.ForegroundProperty, foreground));

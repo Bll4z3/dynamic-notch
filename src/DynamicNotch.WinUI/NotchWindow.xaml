@@ -30,7 +30,7 @@
                                    IsCharging="{x:Bind Vm.Status.IsCharging, Mode=OneWay}"
                                    Visibility="{x:Bind Vm.Status.HasBattery, Mode=OneWay}" />
                     <v:CrossfadeText x:Name="CollapsedTime" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                     Text="{x:Bind Vm.Status.TimeText, Mode=OneWay}" />
+                                     Text="{x:Bind Vm.Status.CollapsedText, Mode=OneWay}" />
                     <StackPanel x:Name="CollapsedRight" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                         <StackPanel x:Name="CollapsedMusic" Orientation="Horizontal" Visibility="Collapsed">
                             <v:Visualizer x:Name="Bars" VerticalAlignment="Center" />
@@ -81,6 +81,11 @@
                         </Border>
                     </Grid>
                 </Grid>
+
+                <!-- ===== Activity pill (volume, brightness, Caps Lock, charging, downloads, updates):
+                     the collapsed notch grows into it; built in NotchWindow.Activity.cs ===== -->
+                <Grid x:Name="ActivityLayer" VerticalAlignment="Top" HorizontalAlignment="Center" Background="Transparent"
+                      IsHitTestVisible="False" />
 
                 <!-- ===== Expanded: header · pages · footer arrive in porting stage 2 ===== -->
                 <Grid x:Name="ExpandedLayer" VerticalAlignment="Top" HorizontalAlignment="Center" IsHitTestVisible="False" />
