@@ -53,8 +53,10 @@ internal sealed class ValueSlider : UserControl
         _valueText.Style = SettingsUi.StyleOf("TimeText");
         _valueText.Foreground = Theme.PrimaryText;
         _valueText.VerticalAlignment = VerticalAlignment.Top;
-        Grid.SetColumn(_valueText, 1);
-        head.Children.Add(_valueText);
+        // The value sits in a small pill (tabular digits) so it reads at a glance and never jitters.
+        var chip = new Border { Background = Theme.InputBrush, BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 1, 8, 2), VerticalAlignment = VerticalAlignment.Top, Child = _valueText };
+        Grid.SetColumn(chip, 1);
+        head.Children.Add(chip);
         root.Children.Add(head);
 
         var trackHost = new Grid { Margin = new Thickness(0, Theme.S1, 0, 0) };
@@ -156,56 +158,109 @@ internal sealed class ValueSlider : UserControl
     }
 }
 
-/// <summary>A segmented pill (equal segments) whose accent-tinted highlight springs to the chosen segment.</summary>
+/// <summary>
+/// A segmented control: equal segments in a rounded track with even inner padding, and a raised highlight
+/// that slides (spring, small overshoot) to the chosen segment, always inset inside the track so its
+/// outline is never clipped. Hovering a segment tints it, pressing squashes the highlight slightly, and
+/// labels shrink to fit narrow segments (ellipsis + tooltip as a last resort). ← / → move the selection.
+/// All motion is compositor transforms / opacity.
+/// </summary>
 internal sealed class Segmented : Grid
 {
+    public const double TrackHeight = 34, Inset = 3;
+    private const double LabelSize = 12.5, MinLabelSize = 10.5;
     private readonly (string id, string label)[] _options;
-    private readonly Border _highlight = new();
+    private readonly Grid _cells = new();
+    private readonly Border _highlight = new(), _shine = new();
     private readonly List<TextBlock> _labels = new();
     private readonly CompositionPropertySet _p;
-    private readonly CompSpring _pos;
+    private readonly CompSpring _pos, _press;
     private int _index;
 
     public Segmented(params (string id, string label)[] options)
     {
         _options = options;
-        Height = 30;
+        Height = TrackHeight;
         Tag = SettingsWindow.NoDragTag;
         Background = Theme.InputBrush;
-        CornerRadius = new CornerRadius(15);
         BorderBrush = Theme.CardBorderBrush;
         BorderThickness = new Thickness(1);
-        for (int i = 0; i < options.Length; i++) ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        CornerRadius = new CornerRadius(TrackHeight / 2);
+        Padding = new Thickness(Inset - 1); // + the 1 px border = an even inset on every side
+        IsTabStop = true;
+        UseSystemFocusVisuals = true;
+        AllowFocusOnInteraction = false;
+
+        double inner = TrackHeight - 2 * Inset;
+        _highlight.HorizontalAlignment = HorizontalAlignment.Left;
+        _highlight.CornerRadius = new CornerRadius(inner / 2);
         _highlight.Background = Theme.AccentSubtleBrush;
         _highlight.BorderBrush = Theme.AccentBrush;
         _highlight.BorderThickness = new Thickness(1);
-        _highlight.CornerRadius = new CornerRadius(13);
-        _highlight.Margin = new Thickness(1);
+        _highlight.IsHitTestVisible = false;
+        // A faint top sheen makes the highlight read as raised.
+        var sheen = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
+        sheen.GradientStops.Add(new GradientStop { Offset = 0, Color = Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF) });
+        sheen.GradientStops.Add(new GradientStop { Offset = 0.6, Color = Color.FromArgb(0, 0xFF, 0xFF, 0xFF) });
+        _shine.Background = sheen;
+        _shine.CornerRadius = _highlight.CornerRadius;
+        _shine.HorizontalAlignment = HorizontalAlignment.Left;
+        _shine.IsHitTestVisible = false;
         Children.Add(_highlight);
+        Children.Add(_shine);
+
+        for (int i = 0; i < options.Length; i++) _cells.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (int i = 0; i < options.Length; i++)
         {
             int idx = i;
             var cell = new Grid { Background = Theme.TransparentBrush };
-            var t = new TextBlock { Text = options[i].label, FontFamily = Theme.FontMedium, FontWeight = FontWeights.Medium, FontSize = Theme.FontCaption + 1, Foreground = Theme.SecondaryText, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, IsHitTestVisible = false };
+            var hover = new Border { Background = Theme.CardHoverBrush, CornerRadius = new CornerRadius(inner / 2), IsHitTestVisible = false, Margin = new Thickness(1) };
+            cell.Children.Add(hover);
+            Motions.HoverFade(cell, hover, () => idx != _index);
+            var t = new TextBlock
+            {
+                Text = options[i].label, FontFamily = Theme.FontMedium, FontWeight = FontWeights.Medium, FontSize = LabelSize,
+                Foreground = Theme.SecondaryText, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.None, TextWrapping = TextWrapping.NoWrap, IsHitTestVisible = false, Margin = new Thickness(6, 0, 6, 0),
+            };
             _labels.Add(t);
             cell.Children.Add(t);
-            cell.Tapped += (_, e) => { e.Handled = true; Select(idx, true); Selected?.Invoke(_options[idx].id); };
+            cell.SizeChanged += (_, e) => Fit(t, e.NewSize.Width);
+            cell.PointerPressed += (_, _) => _press.SetTarget(1, Motion.Press);
+            cell.PointerReleased += (_, _) => _press.SetTarget(0, Motion.Press);
+            cell.PointerExited += (_, _) => _press.SetTarget(0, Motion.Press);
+            cell.Tapped += (_, e) => { e.Handled = true; Choose(idx); };
             SetColumn(cell, i);
-            Children.Add(cell);
+            _cells.Children.Add(cell);
         }
+        Children.Add(_cells);
+
         var hv = Anim.VisualOf(_highlight, translation: true);
-        _p = hv.Compositor.CreatePropertySet();
+        var c = hv.Compositor;
+        _p = c.CreatePropertySet();
         _p.InsertScalar("w", 0);
         _pos = new CompSpring(_p, "i", Motion.TabHighlight, 0, precision: 0.05);
-        hv.StartAnimation("Translation", Anim.Expr(hv.Compositor, "Vector3(p.i * p.w, 0, 0)", ("p", _p)));
+        _press = new CompSpring(_p, "k", Motion.Press, 0);
+        foreach (var el in new UIElement[] { _highlight, _shine })
+        {
+            var v = Anim.VisualOf(el, translation: true);
+            v.StartAnimation("Translation", Anim.Expr(c, "Vector3(p.i * p.w, 0, 0)", ("p", _p)));
+            v.StartAnimation("Scale", Anim.Expr(c, "Vector3(1 - 0.04 * p.k, 1 - 0.08 * p.k, 1)", ("p", _p)));
+        }
         SizeChanged += (_, e) =>
         {
-            double w = e.NewSize.Width / Math.Max(1, _options.Length);
-            _highlight.Width = Math.Max(0, w - 2);
-            _highlight.HorizontalAlignment = HorizontalAlignment.Left;
-            _p.InsertScalar("w", (float)w);
+            double cell = Math.Max(0, (e.NewSize.Width - 2 * Inset) / Math.Max(1, _options.Length));
+            _highlight.Width = _shine.Width = cell;
+            _highlight.Height = _shine.Height = inner;
+            _p.InsertScalar("w", (float)cell);
+            foreach (var el in new UIElement[] { _highlight, _shine })
+                Anim.VisualOf(el).CenterPoint = new System.Numerics.Vector3((float)cell / 2, (float)inner / 2, 0);
         };
-        IsTabStop = false;
+        KeyDown += (_, e) =>
+        {
+            if (e.Key == VirtualKey.Left && _index > 0) { Choose(_index - 1); e.Handled = true; }
+            else if (e.Key == VirtualKey.Right && _index < _options.Length - 1) { Choose(_index + 1); e.Handled = true; }
+        };
     }
 
     public event Action<string>? Selected;
@@ -213,18 +268,50 @@ internal sealed class Segmented : Grid
     public string Value
     {
         get => _options[_index].id;
-        set { int i = Array.FindIndex(_options, o => o.id == value); if (i >= 0) Select(i, IsLoaded); }
+        set { int i = Array.FindIndex(_options, o => o.id == value); if (i >= 0) Select(i, IsLoaded); else Unselect(); }
+    }
+
+    private void Choose(int i)
+    {
+        Select(i, true);
+        Selected?.Invoke(_options[i].id);
+    }
+
+    /// <summary>A value none of the segments represents (e.g. a custom notch scale): no highlight.</summary>
+    private void Unselect()
+    {
+        _highlight.Opacity = _shine.Opacity = 0;
+        _index = -1;
+        for (int k = 0; k < _labels.Count; k++) { _labels[k].Foreground = Theme.SecondaryText; _labels[k].FontFamily = Theme.FontMedium; }
     }
 
     private void Select(int i, bool animate)
     {
+        _highlight.Opacity = _shine.Opacity = 1;
         _index = i;
         if (animate) _pos.SetTarget(i, Motion.TabHighlight); else _pos.Snap(i);
         for (int k = 0; k < _labels.Count; k++)
         {
-            _labels[k].Foreground = k == i ? Theme.PrimaryText : Theme.SecondaryText;
-            _labels[k].FontFamily = k == i ? Theme.FontSemiBold : Theme.FontMedium;
+            bool on = k == i;
+            _labels[k].Foreground = on ? Theme.PrimaryText : Theme.SecondaryText;
+            _labels[k].FontFamily = on ? Theme.FontSemiBold : Theme.FontMedium;
+            _labels[k].FontWeight = on ? FontWeights.SemiBold : FontWeights.Medium;
         }
+    }
+
+    /// <summary>Shrinks a label to fit its segment; if even the smallest size is too wide, it ends with "…" and gets a tooltip.</summary>
+    private static void Fit(TextBlock t, double cellWidth)
+    {
+        double room = Math.Max(0, cellWidth - 12);
+        t.TextTrimming = TextTrimming.None;
+        for (double size = LabelSize; size >= MinLabelSize; size -= 0.5)
+        {
+            t.FontSize = size;
+            t.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            if (t.DesiredSize.Width <= room) { ToolTipService.SetToolTip(t.Parent as UIElement, null); return; }
+        }
+        t.TextTrimming = TextTrimming.CharacterEllipsis;
+        ToolTipService.SetToolTip(t.Parent as UIElement, t.Text);
     }
 }
 

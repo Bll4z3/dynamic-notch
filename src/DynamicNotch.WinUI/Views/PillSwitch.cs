@@ -23,7 +23,7 @@ public sealed class PillSwitch : UserControl
     private readonly Border _ring = new(), _off = new(), _on = new();
     private readonly Ellipse _thumbOff = new(), _thumbOn = new();
     private readonly CompositionPropertySet _p;
-    private readonly CompSpring _t, _shake;
+    private readonly CompSpring _t, _shake, _press;
     private bool _isOn;
 
     public PillSwitch()
@@ -63,6 +63,7 @@ public sealed class PillSwitch : UserControl
         var c = tv.Compositor;
         _p = c.CreatePropertySet();
         _t = new CompSpring(_p, "t", Motion.SwitchThumb, 0);
+        _press = new CompSpring(_p, "k", Motion.Press, 0);
         _shake = new CompSpring(_p, "s", Motion.Shake, 0, precision: 20);
         tv.StartAnimation("Translation", Anim.Expr(c, "Vector3(p.s, 0, 0)", ("p", _p)));
         Anim.VisualOf(_on).StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.t, 0, 1)", ("p", _p)));
@@ -74,9 +75,16 @@ public sealed class PillSwitch : UserControl
             move.SetScalarParameter("D", travel);
             v.StartAnimation("Translation", move);
             v.StartAnimation("Opacity", Anim.Expr(c, on ? "p.t > 0.5 ? 1 : 0" : "p.t > 0.5 ? 0 : 1", ("p", _p)));
+            // Press: the thumb squashes a little (wider, flatter) and springs back on release.
+            v.CenterPoint = new System.Numerics.Vector3((float)Theme.SwitchThumbSize / 2, (float)Theme.SwitchThumbSize / 2, 0);
+            v.StartAnimation("Scale", Anim.Expr(c, "Vector3(1 + 0.16 * p.k, 1 - 0.08 * p.k, 1)", ("p", _p)));
         }
 
         Tapped += (_, e) => { e.Handled = true; Toggle(); };
+        PointerPressed += (_, _) => _press.SetTarget(1, Motion.Press);
+        PointerReleased += (_, _) => _press.SetTarget(0, Motion.Press);
+        PointerExited += (_, _) => _press.SetTarget(0, Motion.Press);
+        PointerCaptureLost += (_, _) => _press.SetTarget(0, Motion.Press);
         KeyDown += (_, e) =>
         {
             if (e.Key is VirtualKey.Space or VirtualKey.Enter) { Toggle(); e.Handled = true; }
@@ -108,6 +116,9 @@ public sealed class PillSwitch : UserControl
         _shake.Snap(0);
         _shake.Impulse(Motion.ShakeImpulse);
     }
+
+    /// <summary>Flips the switch as if it had been clicked (a tap on its row).</summary>
+    public void Flip() => Toggle();
 
     private void Toggle()
     {

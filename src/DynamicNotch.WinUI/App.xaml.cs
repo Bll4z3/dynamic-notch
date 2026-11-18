@@ -258,7 +258,11 @@ public partial class App : Application
         int open = Array.FindIndex(_args, a => a.Equals("--open", StringComparison.OrdinalIgnoreCase));
         if (open >= 0)
         {
-            int page = open + 1 < _args.Length && int.TryParse(_args[open + 1], out var pg) ? pg : 0;
+            // `--open <index|music|clipboard|ask|usage|focus|hub> [delay ms]`: pins the notch open on that page.
+            string which = open + 1 < _args.Length ? _args[open + 1] : "0";
+            int page = int.TryParse(which, out var pg) ? pg
+                : Enum.TryParse<PageId>(which, ignoreCase: true, out var id) ? Math.Max(0, vm.Pages.Enabled.ToList().IndexOf(id)) : 0;
+            _window.DevHoldOpen = true;
             int delay = open + 2 < _args.Length && int.TryParse(_args[open + 2], out var dl) ? dl : 0;
             if (delay <= 0) _window.PinOpen(page);
             else

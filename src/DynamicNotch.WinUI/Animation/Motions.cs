@@ -43,7 +43,7 @@ public static class Motions
     }
 
     /// <summary>A hover fill whose opacity springs 0 ⇄ 1 while <paramref name="source"/> is under the pointer.</summary>
-    public static void HoverFade(UIElement source, UIElement fill, Func<bool>? enabled = null)
+    public static CompSpring HoverFade(UIElement source, UIElement fill, Func<bool>? enabled = null)
     {
         fill.IsHitTestVisible = false;
         var visual = Anim.VisualOf(fill);
@@ -51,6 +51,7 @@ public static class Motions
         visual.StartAnimation("Opacity", Anim.Expr(visual.Compositor, "Clamp(p.v, 0, 1)", ("p", set)));
         source.PointerEntered += (_, _) => { if (enabled?.Invoke() != false) spring.SetTarget(1, Motion.Hover); };
         source.PointerExited += (_, _) => spring.SetTarget(0, Motion.Hover);
+        return spring;
     }
 
     /// <summary>Pops an element in from slightly above, small and transparent (list items appearing).</summary>

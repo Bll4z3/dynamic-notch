@@ -33,6 +33,10 @@ public sealed class BluetoothPopover
     /// <summary>What each row currently shows (device + battery), so unchanged rows aren't rebuilt.</summary>
     private readonly Dictionary<string, (BtDeviceItem item, int? battery)> _shown = new();
     private readonly HashSet<string> _busy = new();
+    private const int NearbyCap = 12;
+    private bool _showAllNearby;
+    private readonly PillButton _moreNearby = new(Icons.ChevronDown, "Show more", quiet: true) { Height = Theme.HubSmallPillHeight, Compact = true };
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _idle;
 
     public BluetoothPopover(Popover pop, BluetoothDeviceService bt, QuickActionsService quick, DevicesViewModel devices)
     {
@@ -46,6 +50,11 @@ public sealed class BluetoothPopover
         _list.Children.Add(_paired);
         _list.Children.Add(_nearbyHeader);
         _list.Children.Add(_nearby);
+        _moreNearby.HorizontalAlignment = HorizontalAlignment.Center;
+        _moreNearby.Margin = new Thickness(0, Theme.S1, 0, Theme.S1);
+        _moreNearby.Visibility = Visibility.Collapsed;
+        _moreNearby.Click += () => { _showAllNearby = true; Refresh(animateNew: true); };
+        _list.Children.Add(_moreNearby);
         pop.Body.Children.Add(new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden });
         pop.Body.Children.Add(_skeleton);
         pop.Body.Children.Add(_empty);
@@ -55,8 +64,17 @@ public sealed class BluetoothPopover
         more.Click += () => QuickActionsService.Open("ms-settings:bluetooth");
         pop.Footer.Children.Add(more);
 
-        // While closed, cache updates (the warm-up prime) build rows ahead of time, so opening never creates them.
-        bt.Changed += () => Refresh(animateNew: _pop.IsOpen);
+        // While closed, cache updates (the warm-up prime) build rows ahead of time, so opening never creates them,
+        // but only once things are quiet: measured, building them while page 4 slid in caused a 95 ms frame gap.
+        _idle = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+        _idle.IsRepeating = false;
+        _idle.Interval = TimeSpan.FromMilliseconds(800);
+        _idle.Tick += (_, _) => { _idle.Stop(); if (!_pop.IsOpen) Refresh(animateNew: false); };
+        bt.Changed += () =>
+        {
+            if (_pop.IsOpen) Refresh(animateNew: true);
+            else { _idle.Stop(); _idle.Start(); }
+        };
         quick.Changed += () => { if (_pop.IsOpen) Refresh(animateNew: true); };
         pop.Opened += () =>
         {
@@ -65,7 +83,7 @@ public sealed class BluetoothPopover
             if (_quick.HasBluetooth && _quick.BluetoothOn)
                 PerfLog.Time("StartWatching (worker thread)", _bt.StartWatching); // returns at once
         };
-        pop.Closed += () => _bt.StopWatching();
+        pop.Closed += () => { _bt.StopWatching(); _showAllNearby = false; };
     }
 
     /// <summary>Page 4 came into view: fill the paired-device cache in the background (once per run).</summary>
@@ -92,7 +110,11 @@ public sealed class BluetoothPopover
         var connected = all.Where(d => d.Connected).Select(d => d.Name).ToList();
         _pop.Caption = connected.Count == 0 ? "No devices connected" : string.Join(", ", connected);
 
-        var keep = new HashSet<string>(all.Select(d => d.Id));
+        var paired = all.Where(d => d.Paired).OrderByDescending(d => d.Connected).ThenBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        var nearbyAll = all.Where(d => !d.Paired).OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        // Measured: ~36 nearby devices here at ~12 ms per row to build; nobody scans that many, so show 12 until asked.
+        var nearby = _showAllNearby ? nearbyAll : nearbyAll.Take(NearbyCap).ToList();
+        var keep = new HashSet<string>(paired.Concat(nearby).Select(d => d.Id));
         foreach (var gone in _rows.Keys.Where(k => !keep.Contains(k) && !_busy.Contains(k)).ToList())
         {
             var row = _rows[gone];
@@ -104,8 +126,11 @@ public sealed class BluetoothPopover
         var arriving = new List<PopRow>();
         _created = 0;
         _passClock.Restart();
-        bool deferred = Sync(_paired, all.Where(d => d.Paired).OrderByDescending(d => d.Connected).ThenBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase), arriving);
-        deferred |= Sync(_nearby, all.Where(d => !d.Paired).OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase), arriving);
+        bool deferred = Sync(_paired, paired, arriving);
+        deferred |= Sync(_nearby, nearby, arriving);
+        int hidden = nearbyAll.Count - nearby.Count;
+        _moreNearby.Visibility = hidden > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _moreNearby.SetContent(Icons.ChevronDown, $"Show {hidden} more");
         if (animateNew) Popover.Stagger(arriving);
         if (deferred) ContinueNextFrame(animateNew);
         PerfLog.Mark($"rows on screen ({_rows.Count})");
@@ -217,8 +242,8 @@ public sealed class BluetoothPopover
         }
         else
         {
-            var pair = PopRow.Action("Pair", primary: true);
-            pair.Click += async () => await Pair(item.Id);
+            string pairId = item.Id;
+            var pair = PopRow.Chip("Pair", async () => await Pair(pairId));
             status.Add(pair);
         }
         row.SetStatus(status.ToArray());

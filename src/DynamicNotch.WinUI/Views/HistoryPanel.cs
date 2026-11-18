@@ -399,6 +399,7 @@ public sealed class HistoryPanel : Grid
         public ClearButton()
         {
             Height = Theme.HubSmallPillHeight;
+            CornerRadius = new CornerRadius(Theme.HubSmallPillHeight / 2); // clip background, border, hover layer and hit area to the pill
             MinWidth = Theme.ClearPillMinWidth;
             Background = Theme.TransparentBrush;
             var radius = new CornerRadius(Theme.HubSmallPillHeight / 2);

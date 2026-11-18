@@ -314,7 +314,7 @@ public static class Theme
     public const double ChargeHaloScale = 1.9, ChargeHaloOpacity = 0.55;
 
     // ---- Page: Notifications + Quick actions -------------------------------------------------------
-    public const double HubRowMinHeight = 46, HubRowIcon = 28, HubTileHeight = 52, HubSliderHeight = 28, HubHeaderHeight = 20;
+    public const double HubRowMinHeight = 46, HubRowIcon = 28, HubTileHeight = 52, HubToggleHeight = 44, HubSliderHeight = 28, HubHeaderHeight = 20;
     public static readonly Thickness HubRowPadding = new(S2, 6, S2, 6);
     public const int HubHistoryMax = 60;
     public const double HubRowGap = 6, HubSmallPillHeight = 24, ClearPillMinWidth = 78;

@@ -3,6 +3,7 @@ using System.Numerics;
 using DynamicNotch.Animation;
 using DynamicNotch.Design;
 using DynamicNotch.Interop;
+using DynamicNotch.Services;
 using DynamicNotch.ViewModels;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Dispatching;
@@ -39,12 +40,13 @@ internal sealed class SettingsWindow : Window
     private readonly Grid _card = new(), _shadowHost = new();
     private readonly Border _tabHighlight = new();
     private readonly Dictionary<object, FrameworkElement> _views = new();
+    private readonly Dictionary<object, Func<FrameworkElement>> _factories = new();
+    private Grid _content = null!;
+    private bool _hidden;
     private readonly CompSpring _open, _tab;
     private readonly DispatcherQueueTimer _closeTimer;
     private bool _closing;
     private SpriteVisual? _caster;
-    private CompositionVisualSurface? _surface;
-    private DropShadow? _shadow;
 
     /// <summary>Raised with the window handle when it opens / IntPtr.Zero when it closes (for the keyboard hook).</summary>
     public static event Action<IntPtr>? HandleChanged;
@@ -101,14 +103,16 @@ internal sealed class SettingsWindow : Window
         var contentHost = new Border { BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1, 0, 0, 0) };
         Grid.SetColumn(contentHost, 1);
         var content = new Grid { Margin = Theme.SettingsPadding };
-        _views[vm.ApiKey] = new ApiKeyTabView(vm.ApiKey);
-        _views[vm.Pages] = new PagesTabView(vm.Pages);
-        _views[vm.Focus] = new FocusTabView(vm.Focus);
-        _views[vm.General] = new GeneralTabView(vm.General);
-        _views[vm.Customisation] = new CustomisationTabView(vm.Customisation);
-        _views[vm.Pills] = new PillsTabView(vm.Pills);
-        _views[vm.Updates] = new UpdatesTabView(vm.Updates);
-        foreach (var v in _views.Values) content.Children.Add(v);
+        // Tab views are built the first time each tab is shown (the Customisation tab alone is a big tree),
+        // so opening Settings only builds the visible tab.
+        _content = content;
+        _factories[vm.ApiKey] = () => new ApiKeyTabView(vm.ApiKey);
+        _factories[vm.Pages] = () => new PagesTabView(vm.Pages);
+        _factories[vm.Focus] = () => new FocusTabView(vm.Focus);
+        _factories[vm.General] = () => new GeneralTabView(vm.General);
+        _factories[vm.Customisation] = () => new CustomisationTabView(vm.Customisation);
+        _factories[vm.Pills] = () => new PillsTabView(vm.Pills);
+        _factories[vm.Updates] = () => new UpdatesTabView(vm.Updates);
         var close = new IconButton(26, Theme.IconSmall) { Icon = Icons.Close, Foreground = Theme.SecondaryText, Tooltip = "Close (Esc)", HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
         close.Click += AnimateClose;
         content.Children.Add(close);
@@ -160,8 +164,7 @@ internal sealed class SettingsWindow : Window
         {
             var centre = new Vector3((float)e.NewSize.Width / 2, (float)e.NewSize.Height / 2, 0);
             cv.CenterPoint = shv.CenterPoint = centre;
-            if (_caster != null) _caster.Size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
-            if (_surface != null) _surface.SourceSize = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
+            if (_caster != null) SoftShadow.Layout(_caster, new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height));
         };
         string s = $"({Anim.F(Motion.WindowStartScale)} + (1 - {Anim.F(Motion.WindowStartScale)}) * p.o)";
         foreach (var v in new[] { cv, ElementCompositionPreview.GetElementVisual(_shadowHost) })
@@ -175,7 +178,7 @@ internal sealed class SettingsWindow : Window
 
         _closeTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
         _closeTimer.IsRepeating = false;
-        _closeTimer.Tick += (_, _) => { _closeTimer.Stop(); Close(); };
+        _closeTimer.Tick += (_, _) => { _closeTimer.Stop(); HideWindow(); };
 
         vm.PropertyChanged += OnVmChanged;
         ShowTab(animate: false);
@@ -202,12 +205,12 @@ internal sealed class SettingsWindow : Window
         };
     }
 
-    private void OnRadiusChanged() { }
+    private void OnRadiusChanged() => BuildShadow(Anim.VisualOf(_card).Compositor); // the shadow's corners follow the radius
 
     private void OnThemeChanged(Services.ThemeService.Part parts)
     {
-        if (parts.HasFlag(Services.ThemeService.Part.Surface) && _shadow != null)
-            _shadow.Opacity = (float)Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity);
+        if (parts.HasFlag(Services.ThemeService.Part.Surface) && _caster != null)
+            _caster.Opacity = (float)Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity);
     }
 
     /// <summary>Marks an element (a tab row, a list row…) that must never start a window drag.</summary>
@@ -242,13 +245,28 @@ internal sealed class SettingsWindow : Window
 
     public static void ShowSingle(SettingsViewModel vm)
     {
-        if (_instance != null)
+        PerfLog.Begin("Settings open");
+        if (_instance is { } existing)
         {
-            _instance.Activate();
-            Native.SetForegroundWindow(_instance._hwnd);
+            // Reopening reuses the hidden window: nothing is rebuilt, only the open spring plays.
+            existing.ShowTab(animate: false);
+            if (existing._hidden)
+            {
+                existing._hidden = false;
+                existing._closing = false;
+                existing.AppWindow.Show();
+                Native.MakeSeeThroughPopup(existing._hwnd);
+                HandleChanged?.Invoke(existing._hwnd);
+                existing._open.Snap(0);
+                existing._open.SetTarget(1, Motion.WindowOpen);
+                existing.FocusFirst();
+            }
+            existing.Activate();
+            Native.SetForegroundWindow(existing._hwnd);
+            PerfLog.Mark("shown (reused window)");
             return;
         }
-        var w = _instance = new SettingsWindow(vm);
+        var w = _instance = PerfLog.Time("new SettingsWindow", () => new SettingsWindow(vm));
         // Centred on the primary monitor, in physical pixels.
         var (bounds, scale) = Native.GetPrimaryMonitor();
         int width = (int)Math.Round((Theme.SettingsWidth + 2 * Theme.SettingsShadowRoom) * scale);
@@ -268,15 +286,23 @@ internal sealed class SettingsWindow : Window
     private void FocusFirst() =>
         DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
         {
-            if (_views[_vm.SelectedTab.Content] is ApiKeyTabView key) key.FocusBox();
+            if (_views.GetValueOrDefault(_vm.SelectedTab.Content) is ApiKeyTabView key) key.FocusBox();
             else _root.Focus(FocusState.Programmatic);
         });
+
+    /// <summary>Closing hides the window (kept for an instant reopen; its views and subscriptions stay single).</summary>
+    private void HideWindow()
+    {
+        _hidden = true;
+        AppWindow.Hide();
+        HandleChanged?.Invoke(IntPtr.Zero);
+    }
 
     private void AnimateClose()
     {
         if (_closing) return;
         _closing = true;
-        if (!Anim.Enabled) { Close(); return; }
+        if (!Anim.Enabled) { HideWindow(); return; }
         _open.SetTarget(0, Motion.FadeOut);
         _closeTimer.Interval = TimeSpan.FromSeconds(Math.Max(0.05, _open.Model.RemainingDuration));
         _closeTimer.Start();
@@ -291,7 +317,14 @@ internal sealed class SettingsWindow : Window
     {
         double y = _vm.SelectedIndex * Theme.SettingsTabHeight;
         if (animate) _tab.SetTarget(y, Motion.TabHighlight); else _tab.Snap(y);
-        foreach (var (key, view) in _views) view.Visibility = ReferenceEquals(key, _vm.SelectedTab.Content) ? Visibility.Visible : Visibility.Collapsed;
+        var selected = _vm.SelectedTab.Content;
+        if (!_views.ContainsKey(selected) && _factories.TryGetValue(selected, out var make))
+        {
+            var view = PerfLog.Time($"build {selected.GetType().Name.Replace("ViewModel", "")}", make);
+            _views[selected] = view;
+            _content.Children.Insert(0, view); // under the close button
+        }
+        foreach (var (key, view) in _views) view.Visibility = ReferenceEquals(key, selected) ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private FrameworkElement TabRow(SettingsTab tab)
@@ -307,21 +340,15 @@ internal sealed class SettingsWindow : Window
     }
 
     /// <summary>Soft shadow under the card: a drop shadow masked by a live surface of the card.</summary>
+    /// <summary>
+    /// Pre-rendered soft shadow under the card (SoftShadow). The old drop shadow was masked by a live surface
+    /// of the whole card, re-rendered on every hover fade, slider drag or preview animation inside it.
+    /// </summary>
     private void BuildShadow(Compositor c)
     {
-        var size = new Vector2((float)Theme.SettingsWidth, (float)Theme.SettingsHeight);
-        var surface = _surface = c.CreateVisualSurface();
-        surface.SourceVisual = ElementCompositionPreview.GetElementVisual(_card);
-        surface.SourceSize = size;
-        var shadow = _shadow = c.CreateDropShadow();
-        shadow.BlurRadius = (float)Theme.SettingsShadowBlur;
-        shadow.Offset = new Vector3(0, (float)Theme.SettingsShadowOffsetY, 0);
-        shadow.Opacity = (float)Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity);
-        shadow.Color = Color.FromArgb(255, 0, 0, 0);
-        shadow.Mask = c.CreateSurfaceBrush(surface);
-        var caster = _caster = c.CreateSpriteVisual();
-        caster.Size = size;
-        caster.Shadow = shadow;
+        var caster = _caster = SoftShadow.Create(c, Theme.CornerRadius, Theme.SettingsShadowBlur,
+            Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity), Theme.SettingsShadowOffsetY);
+        SoftShadow.Layout(caster, new Vector2((float)Math.Max(1, _card.ActualWidth), (float)Math.Max(1, _card.ActualHeight)));
         ElementCompositionPreview.SetElementChildVisual(_shadowHost, caster);
     }
 

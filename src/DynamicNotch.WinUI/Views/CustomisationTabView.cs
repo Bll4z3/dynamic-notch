@@ -58,16 +58,16 @@ internal sealed class CustomisationTabView : Grid
         Children.Add(preview);
 
         var stack = new StackPanel { Margin = new Thickness(0, 0, Theme.S3, Theme.S3) };
-        AddSection(stack, "Accent", BuildAccent());
-        AddSection(stack, "Shape", BuildShape());
-        AddSection(stack, "Font", BuildFont());
-        AddSection(stack, "Sounds", BuildSounds());
-        AddSection(stack, "Motion", BuildMotion());
-        AddSection(stack, "Notch look", BuildLook());
-        AddSection(stack, "Collapsed notch", BuildCollapsed());
-        AddSection(stack, "Behaviour", BuildBehaviour());
-        AddSection(stack, "Performance", BuildPerformance());
-        AddSection(stack, "Looks", BuildLooks());
+        AddSection(stack, Icons.Palette, "Accent", "Colour for switches, sliders and selections", BuildAccent());
+        AddSection(stack, Icons.Crop, "Shape", "Corner radius of the notch, tiles and cards", BuildShape());
+        AddSection(stack, Icons.Text, "Font", "The typeface used everywhere", BuildFont());
+        AddSection(stack, Icons.Speaker, "Sounds", "Short sounds for notch events", BuildSounds());
+        AddSection(stack, Icons.Sparkle, "Motion", "How animations feel", BuildMotion());
+        AddSection(stack, Icons.Eye, "Notch look", "Border, shadow, glow and visualiser", BuildLook());
+        AddSection(stack, Icons.Minus, "Collapsed notch", "What the closed notch shows", BuildCollapsed());
+        AddSection(stack, Icons.Mouse, "Behaviour", "Hover timing and placement", BuildBehaviour());
+        AddSection(stack, Icons.Gauge, "Performance", "Trade a little motion for battery", BuildPerformance());
+        AddSection(stack, Icons.SparkleFilled, "Looks", "One-click styles, and your own", BuildLooks());
         var scroll = new ScrollViewer { Content = stack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         SetRow(scroll, 2);
         Children.Add(scroll);
@@ -115,11 +115,26 @@ internal sealed class CustomisationTabView : Grid
     }
 
     // ---- Layout helpers ------------------------------------------------------------------------------------
-    private void AddSection(StackPanel stack, string title, UIElement content)
+    /// <summary>A section: an accent icon chip · title · one-line description, then its controls in a card.</summary>
+    private void AddSection(StackPanel stack, string icon, string title, string description, UIElement content)
     {
         var block = new StackPanel();
-        block.Children.Add(new TextBlock { Text = title, Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
-        block.Children.Add(SettingsUi.Card(content, new Thickness(Theme.S3, Theme.S3, Theme.S3, Theme.S3)));
+        var head = new Grid { Margin = new Thickness(Theme.S1, Theme.S5, 0, Theme.S2) };
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var chip = new Border
+        {
+            Width = 26, Height = 26, CornerRadius = new CornerRadius(8), Background = Theme.AccentSubtleBrush, VerticalAlignment = VerticalAlignment.Center,
+            Child = new VectorIcon { Data = icon, Size = Design.Theme.IconSmall, Foreground = Theme.AccentBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+        };
+        head.Children.Add(chip);
+        var text = new StackPanel { Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = title, Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontBold, FontWeight = FontWeights.Bold, FontSize = Design.Theme.FontBody + 1 });
+        text.Children.Add(new TextBlock { Text = description, Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText });
+        Grid.SetColumn(text, 1);
+        head.Children.Add(text);
+        block.Children.Add(head);
+        block.Children.Add(SettingsUi.Card(content, new Thickness(14, 12, 14, 12)));
         stack.Children.Add(block);
         _stagger.Add(block, _order++);
     }
@@ -139,7 +154,12 @@ internal sealed class CustomisationTabView : Grid
     /// <summary>A switch row kept in sync with a customisation value.</summary>
     private FrameworkElement Toggle(string title, string description, Func<CustomSettings, bool> get, Action<CustomSettings, bool> set, Action? demo = null)
     {
-        var g = new Grid { MinHeight = 40 };
+        // The whole row is the target: a hover tint, and a tap anywhere flips the switch.
+        var row = new Grid { Background = Theme.TransparentBrush, Margin = new Thickness(-8, 0, -8, 0), Padding = new Thickness(8, 0, 8, 0), Tag = SettingsWindow.NoDragTag };
+        var tint = new Border { Background = Theme.CardHoverBrush, CornerRadius = Theme.RadiusSmall, Margin = new Thickness(-8, 0, -8, 0) };
+        row.Children.Add(tint);
+        Motions.HoverFade(row, tint);
+        var g = new Grid { MinHeight = 44 };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -152,7 +172,9 @@ internal sealed class CustomisationTabView : Grid
         Grid.SetColumn(sw, 1);
         g.Children.Add(sw);
         _refreshers.Add(_ => sw.IsOn = get(_theme.Current));
-        return g;
+        row.Children.Add(g);
+        row.Tapped += (_, e) => { e.Handled = true; sw.Flip(); };
+        return row;
     }
 
     private ValueSlider Slider(string label, double min, double max, double step, Func<double, string> format, Func<CustomSettings, double> get, Action<CustomSettings, double> set, string? caption = null, Action? demo = null)
@@ -174,7 +196,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- a) Accent -----------------------------------------------------------------------------------------
     private UIElement BuildAccent()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         var swatches = new SwatchGrid();
         var picker = new ColorPicker { Margin = Theme.GapTopS3, Visibility = Visibility.Collapsed };
         var contrast = new TextBlock { Style = SettingsUi.StyleOf("CaptionText"), Foreground = new SolidColorBrush(Theme.BatteryAmber), TextWrapping = TextWrapping.Wrap, Margin = Theme.GapTopS2, Visibility = Visibility.Collapsed };
@@ -231,7 +253,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- b) Shape ------------------------------------------------------------------------------------------
     private UIElement BuildShape()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         var corner = Slider("Notch corner radius", Design.Theme.MinCornerRadius, Design.Theme.MaxCornerRadius, 1, v => $"{v:0} px",
             s => s.CornerRadius, (s, v) => s.CornerRadius = v);
         var row = new Grid();
@@ -257,7 +279,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- Font (moved from General) ---------------------------------------------------------------------------
     private UIElement BuildFont()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         var picker = new GeneralTabView.FontPicker(_vm.Fonts);
         var sample = new GeneralTabView.SampleCard { Margin = Theme.GapTopS2 };
         picker.Hovered += f => sample.Show(f ?? _vm.Fonts.Current);
@@ -279,7 +301,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- c) Sounds -----------------------------------------------------------------------------------------
     private UIElement BuildSounds()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         p.Children.Add(Toggle("Notch sounds", "Short, quiet sounds for notch events. Off while Windows is muted.", s => s.SoundsEnabled, (s, v) => s.SoundsEnabled = v));
         p.Children.Add(Slider("Volume", 0, 100, 5, v => $"{v:0}%", s => s.SoundVolume * 100, (s, v) => s.SoundVolume = v / 100,
             caption: "Notch sounds only (your music isn't affected)", demo: () => _vm.Sounds.Preview("notification")));
@@ -333,7 +355,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- d) Motion -----------------------------------------------------------------------------------------
     private UIElement BuildMotion()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         p.Children.Add(Label("Animation feel"));
         p.Children.Add(Choice(s => s.MotionFeel, (s, v) => s.MotionFeel = v, () => _theme.PlayDemo(ThemeService.Part.Motion),
             ("smooth", "Smooth"), ("snappy", "Snappy"), ("bouncy", "Bouncy"), ("calm", "Calm"), ("reduced", "Reduced")));
@@ -350,7 +372,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- e) Notch look -------------------------------------------------------------------------------------
     private UIElement BuildLook()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         p.Children.Add(Slider("Border highlight", 0, 20, 1, v => $"{v:0}%", s => s.Highlight * 100, (s, v) => s.Highlight = v / 100));
         p.Children.Add(Slider("Shadow", 0, 150, 5, v => $"{v:0}%", s => s.ShadowIntensity * 100, (s, v) => s.ShadowIntensity = v / 100));
         p.Children.Add(Divider());
@@ -373,7 +395,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- f) Collapsed notch --------------------------------------------------------------------------------
     private UIElement BuildCollapsed()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         Action demo = () => _theme.PlayDemo(ThemeService.Part.Collapsed);
         p.Children.Add(Toggle("Battery ring", "", s => s.ShowBatteryRing, (s, v) => s.ShowBatteryRing = v, demo));
         p.Children.Add(Toggle("Clock", "", s => s.ShowClock, (s, v) => s.ShowClock = v, demo));
@@ -386,7 +408,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- g) Behaviour --------------------------------------------------------------------------------------
     private UIElement BuildBehaviour()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         p.Children.Add(Slider("Hover to expand", 0, 600, 10, v => $"{v:0} ms", s => s.HoverDelayMs, (s, v) => s.HoverDelayMs = (int)v, "How long the pointer rests on the notch before it opens"));
         p.Children.Add(Slider("Collapse after leaving", 150, 2000, 50, v => $"{v:0} ms", s => s.CollapseDelayMs, (s, v) => s.CollapseDelayMs = (int)v));
         p.Children.Add(Slider("Distance from the top", 0, 40, 1, v => $"{v:0} px", s => s.TopOffset, (s, v) => s.TopOffset = v, "0 keeps the notch flush with the screen edge"));
@@ -399,7 +421,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- Performance ---------------------------------------------------------------------------------------
     private UIElement BuildPerformance()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         p.Children.Add(Label("Performance mode"));
         p.Children.Add(Choice(s => s.PerformanceMode, (s, v) => s.PerformanceMode = v, null, ("auto", "Automatic"), ("standard", "Standard"), ("low", "Low power")));
         p.Children.Add(Caption("Low power slows the visualiser, stops the glow breathing and shortens staggers. Automatic switches to it on battery saver and in Remote Desktop."));
@@ -409,7 +431,7 @@ internal sealed class CustomisationTabView : Grid
     // ---- h) Looks ------------------------------------------------------------------------------------------
     private UIElement BuildLooks()
     {
-        var p = new StackPanel();
+        var p = new StackPanel { Spacing = 2 };
         var row = new Grid();
         for (int i = 0; i < BuiltInLooks.All.Length; i++) row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (int i = 0; i < BuiltInLooks.All.Length; i++)

@@ -19,14 +19,16 @@ namespace DynamicNotch.Services;
 /// </summary>
 public sealed class FullscreenService : IDisposable
 {
-    private const int PollMs = 750, SettleMs = 250;
+    // The location hook below catches F11 / video-fullscreen buttons as they happen, so the poll is only a slow safety net.
+    private const int PollMs = 3000, SettleMs = 250;
     private static readonly string[] ShellClasses = { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
 
     private readonly Func<IntPtr> _notchWindow;
     private readonly DispatcherQueueTimer _poll, _settle;
     private readonly WinEventDelegate _hookProc;
     private readonly uint _pid = (uint)Environment.ProcessId;
-    private IntPtr _hook;
+    private IntPtr _hook, _locHook;
+    private readonly WinEventDelegate _locProc;
     private bool _enabled;
 
     public FullscreenService(Func<IntPtr> notchWindow)
@@ -41,6 +43,12 @@ public sealed class FullscreenService : IDisposable
         _settle.Interval = TimeSpan.FromMilliseconds(SettleMs);
         _settle.Tick += (_, _) => { _settle.Stop(); Check(); };
         _hookProc = (_, _, _, _, _, _, _) => { if (_enabled) { _settle.Stop(); _settle.Start(); } }; // let the window settle first
+        _locProc = (_, _, hwnd, idObject, idChild, _, _) =>
+        {
+            if (!_enabled || idObject != 0 /* OBJID_WINDOW */ || idChild != 0 || hwnd != GetForegroundWindow()) return;
+            _settle.Stop();
+            _settle.Start();
+        };
     }
 
     /// <summary>True while a fullscreen app covers the notch's monitor (raised on the UI thread on change).</summary>
@@ -59,6 +67,10 @@ public sealed class FullscreenService : IDisposable
             {
                 if (_hook == IntPtr.Zero)
                     _hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, _hookProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+                // A window resizing / going fullscreen without a foreground change: only the foreground window's own
+                // OBJID_WINDOW events count (carets, cursors and other windows return immediately).
+                if (_locHook == IntPtr.Zero)
+                    _locHook = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, IntPtr.Zero, _locProc, 0, 0, WINEVENT_OUTOFCONTEXT);
                 _poll.Start();
                 Check();
             }
@@ -67,6 +79,7 @@ public sealed class FullscreenService : IDisposable
                 _poll.Stop();
                 _settle.Stop();
                 if (_hook != IntPtr.Zero) { UnhookWinEvent(_hook); _hook = IntPtr.Zero; }
+                if (_locHook != IntPtr.Zero) { UnhookWinEvent(_locHook); _locHook = IntPtr.Zero; }
                 Report(false);
             }
         }
@@ -116,12 +129,14 @@ public sealed class FullscreenService : IDisposable
         _poll.Stop();
         _settle.Stop();
         if (_hook != IntPtr.Zero) UnhookWinEvent(_hook);
+        if (_locHook != IntPtr.Zero) UnhookWinEvent(_locHook);
+        _locHook = IntPtr.Zero;
         _hook = IntPtr.Zero;
     }
 
     // ---- Win32 ----------------------------------------------------------------------------------------
     private const int QUNS_BUSY = 2, QUNS_RUNNING_D3D_FULL_SCREEN = 3, QUNS_PRESENTATION_MODE = 4;
-    private const uint EVENT_SYSTEM_FOREGROUND = 0x0003, WINEVENT_OUTOFCONTEXT = 0;
+    private const uint EVENT_SYSTEM_FOREGROUND = 0x0003, EVENT_OBJECT_LOCATIONCHANGE = 0x800B, WINEVENT_OUTOFCONTEXT = 0;
     private const uint MONITOR_DEFAULTTONULL = 0, MONITOR_DEFAULTTOPRIMARY = 1;
 
     private delegate void WinEventDelegate(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);

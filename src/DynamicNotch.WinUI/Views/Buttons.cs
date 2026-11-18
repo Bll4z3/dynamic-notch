@@ -34,6 +34,7 @@ public sealed class IconButton : Grid
         Children.Add(_icon);
 
         Motions.HoverFade(this, _fill, () => _enabled);
+        SizeChanged += (_, e) => { if (_fill.CornerRadius.TopLeft >= Math.Min(e.NewSize.Width, e.NewSize.Height) / 2) CornerRadius = new CornerRadius(Math.Min(e.NewSize.Width, e.NewSize.Height) / 2); };
         Motions.PressScale(this, () => _enabled);
         PointerPressed += (_, e) => { if (!_enabled) return; _pressed = true; CapturePointer(e.Pointer); e.Handled = true; };
         PointerReleased += (_, e) =>
@@ -124,6 +125,8 @@ public sealed class PillButton : Grid
         Children.Add(_lighten);
         Children.Add(row);
         Motions.HoverFade(this, _lighten);
+        // Clip everything (background, border, hover layer, hit area) to the pill, whatever height the caller sets.
+        SizeChanged += (_, e) => CornerRadius = new CornerRadius(e.NewSize.Height / 2);
         Motions.PressScale(this);
         Tapped += (_, e) =>
         {
