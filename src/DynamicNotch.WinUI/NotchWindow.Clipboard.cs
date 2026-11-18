@@ -105,6 +105,7 @@ public sealed partial class NotchWindow
     {
         if (_dragIn == on) return;
         _dragIn = on;
+        _shape.SetDropGlow(on);
         _dropGlow.SetTarget(on ? 1 : 0, Motion.Hover);
         _frame.Shelf.SetDropActive(on);
         UpdateState();

@@ -97,10 +97,12 @@ public sealed class PillButton : Grid
         Background = Theme.TransparentBrush;
         var radius = new CornerRadius(Theme.PillButtonHeight / 2);
         _back.CornerRadius = _lighten.CornerRadius = radius;
-        _back.Background = quiet ? Theme.QuietPillBrush : Theme.PillButtonBrush;
-        if (quiet) { _back.BorderBrush = Theme.HighlightBorderBrush; _back.BorderThickness = new Thickness(1); }
+        // Primary pills carry the accent (gradient, lit edge, auto black / white text); quiet pills stay neutral.
+        _back.Background = quiet ? Theme.QuietPillBrush : Theme.AccentGradientBrush;
+        _back.BorderBrush = quiet ? Theme.HighlightBorderBrush : Theme.AccentBorderBrush;
+        _back.BorderThickness = new Thickness(1);
         _lighten.Background = Theme.PillLightenBrush;
-        var fg = quiet ? Theme.PrimaryText : Theme.PillButtonTextBrush;
+        var fg = quiet ? Theme.PrimaryText : Theme.OnAccentBrush;
 
         var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = Theme.PillButtonPadding, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         if (icon != null)
@@ -126,7 +128,15 @@ public sealed class PillButton : Grid
         Children.Add(row);
         Motions.HoverFade(this, _lighten);
         // Clip everything (background, border, hover layer, hit area) to the pill, whatever height the caller sets.
-        SizeChanged += (_, e) => CornerRadius = new CornerRadius(e.NewSize.Height / 2);
+        // Corners follow the button roundness token (a full pill by default), whatever height the caller sets.
+        void Shape()
+        {
+            double h = ActualHeight > 0 ? ActualHeight : double.IsNaN(Height) ? Theme.PillButtonHeight : Height;
+            var r = new CornerRadius(ButtonShape.RadiusFor(h));
+            CornerRadius = _back.CornerRadius = _lighten.CornerRadius = r;
+        }
+        SizeChanged += (_, _) => Shape();
+        ButtonShape.Register(this, Shape);
         Motions.PressScale(this);
         Tapped += (_, e) =>
         {
@@ -156,8 +166,9 @@ public sealed class PillButton : Grid
         set
         {
             if (!value) return;
-            _back.Background = Theme.AccentBrush;
-            _back.BorderThickness = new Thickness(0);
+            _back.Background = Theme.AccentGradientBrush;
+            _back.BorderBrush = Theme.AccentBorderBrush;
+            _back.BorderThickness = new Thickness(1);
             _icon.Foreground = Theme.OnAccentBrush;
             _label.Foreground = Theme.OnAccentBrush;
         }

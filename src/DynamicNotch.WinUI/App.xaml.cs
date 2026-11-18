@@ -205,7 +205,7 @@ public partial class App : Application
         // Settings (single window); the hook never intercepts keys while it is in front.
         vm.OpenSettingsRequested += () => Views.SettingsWindow.ShowSingle(settingsVm);
         vm.OpenApiKeyRequested += () => { settingsVm.SelectApiKey(); Views.SettingsWindow.ShowSingle(settingsVm); };
-        Views.SettingsWindow.HandleChanged += h => keys.PassThroughWindow = h;
+        Views.SettingsWindow.HandleChanged += h => { keys.PassThroughWindow = h; theme.SetSettingsOpen(h != IntPtr.Zero); };
         // A new UI font: every open window refreshes its text with a short cross-fade (no restart).
         fonts.FontChanged += previous =>
         {

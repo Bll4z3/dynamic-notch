@@ -139,6 +139,14 @@ public sealed class PageNavigator : Grid
                 Background = Theme.PrimaryText, IsHitTestVisible = false,
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
             };
+            // The current page's dot carries the accent: an accent copy over the white dot, shown by how
+            // "current" the page is (so it slides and stretches with the pager).
+            var accentDot = new Border
+            {
+                Width = dot.Width, Height = dot.Height, CornerRadius = dot.CornerRadius,
+                Background = Theme.AccentReadableBrush, IsHitTestVisible = false,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            };
             // Dimmed icon, plus an accent copy on top that shows by how "current" the page is.
             var icon = new Grid { Width = Theme.NavIconSize, Height = Theme.NavIconSize, IsHitTestVisible = false,
                                   HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -168,6 +176,10 @@ public sealed class PageNavigator : Grid
             Bind(dot, "Translation", $"Vector3({cx}, 0, 0)", translation: true);
             Bind(dot, "Scale", $"Vector3({W(i)} / {Anim.F(Theme.NavDot + Theme.NavDotActiveExtra)} * (1 - 0.6 * {cm}), 1 - 0.6 * {cm}, 1)");
             Bind(dot, "Opacity", $"(0.3 + 0.7 * {Active(i)}) * (1 - {cm})");
+            Motions.CentreOrigin(accentDot);
+            Bind(accentDot, "Translation", $"Vector3({cx}, 0, 0)", translation: true);
+            Bind(accentDot, "Scale", $"Vector3({W(i)} / {Anim.F(Theme.NavDot + Theme.NavDotActiveExtra)} * (1 - 0.6 * {cm}), 1 - 0.6 * {cm}, 1)");
+            Bind(accentDot, "Opacity", $"{Active(i)} * (1 - {cm})");
             // Icon: grows 0.5 → 1 and fades in at the same spot; hover adds a little scale.
             string s = Anim.F(Motion.NavIconStartScale);
             Motions.CentreOrigin(icon);
@@ -177,6 +189,7 @@ public sealed class PageNavigator : Grid
             Bind(accent, "Opacity", Active(i));
 
             Children.Add(dot);
+            Children.Add(accentDot);
             Children.Add(icon);
             _slots.Add(new Slot { Dot = dot, Hit = hit, Icon = icon, Morph = morph, Hover = hover });
         }

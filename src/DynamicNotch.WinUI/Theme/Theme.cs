@@ -225,6 +225,20 @@ public static class Theme
     public const double SettingsDragBandHeight = 44;
     public const double SettingsFieldHeight = 36;
     public const double SettingsShadowBlur = 30, SettingsShadowOffsetY = 10, SettingsShadowOpacity = 0.6;
+    /// <summary>The Settings card's surface: a near-black vertical gradient (depth without a live blur).</summary>
+    public static readonly Color SettingsSurfaceTop = Rgb(0x13, 0x13, 0x17), SettingsSurfaceBottom = Rgb(0x07, 0x07, 0x09);
+    /// <summary>The sidebar's slightly raised panel.</summary>
+    public static readonly Color SidebarColor = Argb(0x0A, 0xFF, 0xFF, 0xFF);
+    /// <summary>Settings cards: a faintly lit top fading down, with a brighter top edge.</summary>
+    public static readonly Color CardSurfaceTop = Argb(0x10, 0xFF, 0xFF, 0xFF), CardSurfaceBottom = Argb(0x06, 0xFF, 0xFF, 0xFF);
+    public static LinearGradientBrush SettingsSurfaceBrush { get; private set; } = null!;
+    public static SolidColorBrush SidebarBrush { get; private set; } = null!;
+    public static LinearGradientBrush CardSurfaceBrush { get; private set; } = null!;
+    public static LinearGradientBrush CardEdgeBrush { get; private set; } = null!;
+    /// <summary>Settings tab indicator: row slot, the accent bar beside the selected tab and the content's entrance stagger.</summary>
+    public const double SettingsTabBarWidth = 3, SettingsTabBarHeight = 16;
+    public const int SettingsEntranceStepMs = 32, SettingsEntranceMax = 10;
+    public const double SettingsEntranceRise = 12;
 
     // ---- Settings: Pages tab + switch -------------------------------------------------------------
     public const double SwitchWidth = 42, SwitchHeight = 24, SwitchThumbSize = 18, SwitchThumbInset = 3;
@@ -259,7 +273,6 @@ public static class Theme
     public const double PreviewShadowBlur = 28, PreviewShadowOffsetY = 8, PreviewShadowOpacity = 0.55;
 
     // ---- Page navigator --------------------------------------------------------------------------
-    public static readonly Color NavAccentColor = Rgb(0xFF, 0x37, 0x5F);
     public static readonly Color NavDimColor = Argb(0x8C, 0xF5, 0xF5, 0xF7);
     public static readonly Color NavPillColor = Rgb(0x16, 0x16, 0x1A);
     public static readonly Color NavHighlightColor = Argb(0x24, 0xFF, 0xFF, 0xFF);
@@ -354,18 +367,90 @@ public static class Theme
     /// Composition brushes and cached colours update here; keep handlers trivial.</summary>
     public static event Action? AccentChanged;
 
+    // ---- Accent palette (generated from the live accent; see AccentPalette) ---------------------------
+    /// <summary>The live palette: base, light / dark tints, glow, tint, border, readable-on-black and on-accent.</summary>
+    public static AccentPalette Palette { get; private set; } = AccentPalette.From(DefaultAccent);
+    /// <summary>Lighter tint of the accent (gradient tops, hover).</summary>
+    public static SolidColorBrush AccentLightBrush { get; private set; } = null!;
+    /// <summary>Darker tint of the accent (gradient ends, pressed).</summary>
+    public static SolidColorBrush AccentDarkBrush { get; private set; } = null!;
+    /// <summary>Soft semi-transparent accent for halos and edge highlights.</summary>
+    public static SolidColorBrush AccentGlowBrush { get; private set; } = null!;
+    /// <summary>Low-opacity accent wash (selected rows, card washes).</summary>
+    public static SolidColorBrush AccentTintBrush { get; private set; } = null!;
+    /// <summary>Hairline accent outline for selected / focused surfaces.</summary>
+    public static SolidColorBrush AccentBorderBrush { get; private set; } = null!;
+    /// <summary>The accent lifted for text / icons on black (always ≥ 4.5:1).</summary>
+    public static SolidColorBrush AccentReadableBrush { get; private set; } = null!;
+    /// <summary>Accent fill with depth: light at the top-left to the base at the bottom-right (buttons, chips, active tiles).</summary>
+    public static LinearGradientBrush AccentGradientBrush { get; private set; } = null!;
+    /// <summary>Horizontal accent gradient, base → light (slider and progress fills, so the leading edge is brightest).</summary>
+    public static LinearGradientBrush AccentTrackBrush { get; private set; } = null!;
+    /// <summary>Vertical accent gradient for small marks on the notch (visualiser bars): readable accent, lighter at the top.</summary>
+    public static LinearGradientBrush AccentBarBrush { get; private set; } = null!;
+    /// <summary>A soft radial halo: glow in the centre fading to nothing (glows behind thumbs, switches, chips).</summary>
+    public static RadialGradientBrush AccentHaloBrush { get; private set; } = null!;
+    /// <summary>A faint, wide radial wash for big surfaces (the Settings window's aurora).</summary>
+    public static RadialGradientBrush AccentAuroraBrush { get; private set; } = null!;
+    /// <summary>A faint wash of the dark tint (the Settings window's second aurora, bottom right).</summary>
+    public static RadialGradientBrush AccentAuroraDarkBrush { get; private set; } = null!;
+
     /// <summary>Applies an accent colour right now (ThemeService calls this per frame while cross-fading).</summary>
-    public static void ApplyAccent(Color c)
+    /// <param name="final">False on the in-between frames of a cross-fade: the radial glows (which rebuild their
+    /// compositor brush on every change) wait for the final frame; everything else blends every frame.</param>
+    public static void ApplyAccent(Color c, bool final = true)
     {
-        AccentColor = c;
-        OnAccentColor = OnColorFor(c);
+        var p = Palette = AccentPalette.From(c);
+        AccentColor = p.Base;
+        OnAccentColor = p.OnAccent;
         if (AccentBrush == null) return;
-        AccentBrush.Color = c;
-        AccentHoverBrush.Color = Lerp(c, Rgb(0xFF, 0xFF, 0xFF), 0.18);
+        AccentBrush.Color = p.Base;
+        AccentHoverBrush.Color = p.Light;
         AccentSubtleBrush.Color = Color.FromArgb(0x2E, c.R, c.G, c.B);
-        OnAccentBrush.Color = OnAccentColor;
+        OnAccentBrush.Color = p.OnAccent;
+        AccentLightBrush.Color = p.Light;
+        AccentDarkBrush.Color = p.Dark;
+        AccentGlowBrush.Color = p.Glow;
+        AccentTintBrush.Color = p.Tint;
+        AccentBorderBrush.Color = p.Border;
+        AccentReadableBrush.Color = p.Readable;
+        SetStops(AccentGradientBrush, p.Light, p.Base);
+        SetStops(AccentTrackBrush, p.Base, p.Light);
+        SetStops(AccentBarBrush, Lerp(p.Readable, Rgb(0xFF, 0xFF, 0xFF), 0.3), p.Readable); // always visible on the black notch
+        if (final)
+        {
+            SetStops(AccentHaloBrush, p.Glow, AccentPalette.WithAlpha(p.Glow, 0));
+            SetStops(AccentAuroraBrush, AccentPalette.WithAlpha(p.Base, 0x30), AccentPalette.WithAlpha(p.Base, 0));
+            SetStops(AccentAuroraDarkBrush, AccentPalette.WithAlpha(p.Dark, 0x26), AccentPalette.WithAlpha(p.Dark, 0));
+        }
         AccentChanged?.Invoke();
     }
+
+    private static void SetStops(LinearGradientBrush b, Color first, Color last) => SetStops(b.GradientStops, first, last);
+    // WinUI's RadialGradientBrush only rebuilds its compositor brush when the stop collection changes, not when
+    // a stop's colour is edited in place, so its stops are replaced (cheap: two small objects per change).
+    private static void SetStops(RadialGradientBrush b, Color first, Color last)
+    {
+        b.GradientStops[0] = new GradientStop { Offset = 0, Color = first };
+        b.GradientStops[1] = new GradientStop { Offset = 1, Color = last };
+    }
+    private static void SetStops(IList<GradientStop> stops, Color first, Color last)
+    {
+        stops[0].Color = first;
+        stops[^1].Color = last;
+    }
+
+    private static LinearGradientBrush Linear(double x0, double y0, double x1, double y1) => new()
+    {
+        StartPoint = new Windows.Foundation.Point(x0, y0),
+        EndPoint = new Windows.Foundation.Point(x1, y1),
+        GradientStops = { new GradientStop { Offset = 0 }, new GradientStop { Offset = 1 } },
+    };
+
+    private static RadialGradientBrush Radial() => new()
+    {
+        GradientStops = { new GradientStop { Offset = 0 }, new GradientStop { Offset = 1 } },
+    };
 
     /// <summary>WCAG relative luminance (0..1).</summary>
     public static double Luminance(Color c)
@@ -426,6 +511,28 @@ public static class Theme
         AccentHoverBrush = new SolidColorBrush(AccentColor);
         AccentSubtleBrush = new SolidColorBrush(AccentColor);
         OnAccentBrush = new SolidColorBrush(OnAccentColor);
+        AccentLightBrush = new SolidColorBrush(AccentColor);
+        AccentDarkBrush = new SolidColorBrush(AccentColor);
+        AccentGlowBrush = new SolidColorBrush(AccentColor);
+        AccentTintBrush = new SolidColorBrush(AccentColor);
+        AccentBorderBrush = new SolidColorBrush(AccentColor);
+        AccentReadableBrush = new SolidColorBrush(AccentColor);
+        AccentGradientBrush = Linear(0, 0, 1, 1);
+        AccentTrackBrush = Linear(0, 0, 1, 0);
+        AccentBarBrush = Linear(0, 0, 0, 1);
+        AccentHaloBrush = Radial();
+        AccentAuroraBrush = Radial();
+        AccentAuroraDarkBrush = Radial();
+        SettingsSurfaceBrush = Linear(0, 0, 0, 1);
+        SettingsSurfaceBrush.GradientStops[0].Color = SettingsSurfaceTop;
+        SettingsSurfaceBrush.GradientStops[1].Color = SettingsSurfaceBottom;
+        SidebarBrush = new SolidColorBrush(SidebarColor);
+        CardSurfaceBrush = Linear(0, 0, 0, 1);
+        CardSurfaceBrush.GradientStops[0].Color = CardSurfaceTop;
+        CardSurfaceBrush.GradientStops[1].Color = CardSurfaceBottom;
+        CardEdgeBrush = Linear(0, 0, 0, 1);
+        CardEdgeBrush.GradientStops[0].Color = Argb(0x24, 0xFF, 0xFF, 0xFF);
+        CardEdgeBrush.GradientStops[1].Color = Argb(0x0C, 0xFF, 0xFF, 0xFF);
         TransparentBrush = new SolidColorBrush(Argb(0, 0, 0, 0));
         CardBrush = new SolidColorBrush(CardColor);
         CardBorderBrush = new SolidColorBrush(CardBorderColor);

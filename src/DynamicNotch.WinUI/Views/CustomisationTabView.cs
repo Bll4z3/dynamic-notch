@@ -122,11 +122,14 @@ internal sealed class CustomisationTabView : Grid
         var head = new Grid { Margin = new Thickness(Theme.S1, Theme.S5, 0, Theme.S2) };
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var chip = new Border
+        // Icon chip: an accent-gradient tile with a soft halo behind it.
+        var chip = new Grid { Width = 28, Height = 28, VerticalAlignment = VerticalAlignment.Center };
+        chip.Children.Add(new Border { Width = 48, Height = 48, Margin = new Thickness(-10), Background = Theme.AccentHaloBrush, Opacity = 0.7, IsHitTestVisible = false });
+        chip.Children.Add(new Border
         {
-            Width = 26, Height = 26, CornerRadius = new CornerRadius(8), Background = Theme.AccentSubtleBrush, VerticalAlignment = VerticalAlignment.Center,
-            Child = new VectorIcon { Data = icon, Size = Design.Theme.IconSmall, Foreground = Theme.AccentBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
-        };
+            CornerRadius = new CornerRadius(8), Background = Theme.AccentGradientBrush, BorderBrush = Theme.AccentBorderBrush, BorderThickness = new Thickness(1),
+            Child = new VectorIcon { Data = icon, Size = Design.Theme.IconSmall, Foreground = Theme.OnAccentBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+        });
         head.Children.Add(chip);
         var text = new StackPanel { Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Text = title, Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontBold, FontWeight = FontWeights.Bold, FontSize = Design.Theme.FontBody + 1 });
@@ -233,8 +236,10 @@ internal sealed class CustomisationTabView : Grid
         p.Children.Add(Divider());
         p.Children.Add(Toggle("Match Windows accent colour", "Uses your Windows accent and follows it when it changes",
             s => s.MatchWindowsAccent, (s, v) => s.MatchWindowsAccent = v, () => _theme.PlayDemo(ThemeService.Part.Accent)));
-        p.Children.Add(Toggle("Follow album colour", "On the music page, the accent takes the song's colour (your colour otherwise)",
+        p.Children.Add(Toggle("Follow album colour", "While music plays, the song's colour flows through the notch (your colour shows while Settings is open)",
             s => s.FollowAlbumColor, (s, v) => s.FollowAlbumColor = v));
+        // The palette generated from the accent (live, so it shows album colours and cross-fades too).
+        p.Children.Add(PaletteStrip());
         _refreshers.Add(animate =>
         {
             var s = _theme.Current;
@@ -248,6 +253,27 @@ internal sealed class CustomisationTabView : Grid
             contrast.Text = $"This colour is hard to see on the black notch (contrast {Design.Theme.Contrast(chosen, Design.Theme.NotchColor):0.0}:1). Text on it adapts automatically.";
         });
         return p;
+    }
+
+    /// <summary>A row of chips showing the generated palette (dark, base, light, glow, tint, text on accent).</summary>
+    private static FrameworkElement PaletteStrip()
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Theme.S2, Margin = new Thickness(0, Theme.S2, 0, Theme.S1) };
+        row.Children.Add(new TextBlock { Text = "Palette", Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, Theme.S1, 0) });
+        foreach (var (brush, name) in new (Brush, string)[] { (Theme.AccentDarkBrush, "Dark"), (Theme.AccentBrush, "Base"), (Theme.AccentLightBrush, "Light"), (Theme.AccentGlowBrush, "Glow"), (Theme.AccentTintBrush, "Tint") })
+        {
+            var chip = new Border { Width = 34, Height = 20, CornerRadius = new CornerRadius(10), Background = brush, BorderBrush = Theme.CardEdgeBrush, BorderThickness = new Thickness(1) };
+            ToolTipService.SetToolTip(chip, name);
+            row.Children.Add(chip);
+        }
+        var text = new Border
+        {
+            Height = 20, CornerRadius = new CornerRadius(10), Background = Theme.AccentGradientBrush, Padding = new Thickness(Theme.S2, 0, Theme.S2, 0),
+            Child = new TextBlock { Text = "Aa", FontFamily = Theme.FontSemiBold, FontSize = Design.Theme.FontCaption, Foreground = Theme.OnAccentBrush, VerticalAlignment = VerticalAlignment.Center },
+        };
+        ToolTipService.SetToolTip(text, "Text on the accent switches between black and white for contrast");
+        row.Children.Add(text);
+        return row;
     }
 
     // ---- b) Shape ------------------------------------------------------------------------------------------
@@ -272,7 +298,10 @@ internal sealed class CustomisationTabView : Grid
         p.Children.Add(Toggle("Link to corner radius", "Tiles, rows and cards follow the notch (about half its radius)",
             s => s.LinkTileRadius, (s, v) => { if (!v) s.TileRadius = ThemeService.EffectiveTileRadius(s); s.LinkTileRadius = v; }));
         _refreshers.Add(_ => tile.Opacity = _theme.Current.LinkTileRadius ? 0.55 : 1);
-        p.Children.Add(Caption("Pills and switches always stay fully round (half their height), whatever the radius."));
+        p.Children.Add(Divider());
+        p.Children.Add(Slider("Button roundness", 0, 100, 5, v => v >= 100 ? "Pill" : $"{v:0}%", s => s.ButtonRoundness * 100, (s, v) => s.ButtonRoundness = v / 100,
+            caption: "Buttons and segmented controls: 100% is a full pill, lower values square them off"));
+        p.Children.Add(Caption("Switches always stay fully round (half their height), whatever the radius."));
         return p;
     }
 
@@ -383,6 +412,8 @@ internal sealed class CustomisationTabView : Grid
         p.Children.Add(Divider());
         p.Children.Add(Label("Visualiser"));
         p.Children.Add(Choice(s => s.Visualizer, (s, v) => s.Visualizer = v, () => _theme.PlayDemo(ThemeService.Part.Collapsed), ("bars", "Bars"), ("wave", "Wave"), ("off", "Off")));
+        p.Children.Add(Label("Visualiser colour"));
+        p.Children.Add(Choice(s => s.VisualizerColor, (s, v) => s.VisualizerColor = v, () => _theme.PlayDemo(ThemeService.Part.Collapsed), ("accent", "Accent"), ("white", "White")));
         p.Children.Add(Divider());
         p.Children.Add(Label("Notch size"));
         p.Children.Add(Choice(s => s.NotchScale switch { 0.9 => "compact", 1.0 => "default", 1.15 => "large", _ => "custom" },

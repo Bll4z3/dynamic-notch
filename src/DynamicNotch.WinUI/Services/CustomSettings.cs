@@ -21,6 +21,8 @@ public sealed class CustomSettings
     public double CornerRadius { get; set; } = Theme.DefaultCornerRadius;
     public double TileRadius { get; set; } = Theme.DefaultCornerRadiusSmall;
     public bool LinkTileRadius { get; set; } = true;
+    /// <summary>Button roundness, 0..1: 1 = full pills (default), 0 = softly squared buttons and segmented controls.</summary>
+    public double ButtonRoundness { get; set; } = 1.0;
 
     // ---- Sounds ----
     public bool SoundsEnabled { get; set; } = true;
@@ -45,6 +47,8 @@ public sealed class CustomSettings
     /// <summary>album (default) or accent.</summary>
     public string GlowSource { get; set; } = "album";
     public double NotchScale { get; set; } = 1.0;
+    /// <summary>Collapsed visualiser colour: accent (default) or white.</summary>
+    public string VisualizerColor { get; set; } = "accent";
 
     // ---- Collapsed notch ----
     public bool ShowBatteryRing { get; set; } = true;
@@ -83,6 +87,7 @@ public sealed class CustomSettings
         RecentColors = (RecentColors ?? new()).Where(c => ColorUtil.TryParse(c, out _)).Distinct(StringComparer.OrdinalIgnoreCase).Take(8).ToList();
         CornerRadius = C(CornerRadius, Theme.MinCornerRadius, Theme.MaxCornerRadius, Theme.DefaultCornerRadius);
         TileRadius = C(TileRadius, Theme.MinCornerRadiusSmall, Theme.MaxCornerRadiusSmall, Theme.DefaultCornerRadiusSmall);
+        ButtonRoundness = C(ButtonRoundness, 0, 1, 1);
         SoundPreset = Pick(SoundPreset, "off", SoundPresets.Ids);
         SoundVolume = C(SoundVolume, 0, 1, 0.6);
         SoundEvents ??= new();
@@ -94,6 +99,7 @@ public sealed class CustomSettings
         Visualizer = Pick(Visualizer, "bars", "bars", "wave", "off");
         GlowSource = Pick(GlowSource, "album", "album", "accent");
         NotchScale = C(NotchScale, 0.85, 1.25, 1);
+        VisualizerColor = Pick(VisualizerColor, "accent", "accent", "white");
         ClockFormat = Pick(ClockFormat, "system", "system", "12", "24");
         HoverDelayMs = (int)C(HoverDelayMs, 0, 600, Motion.HoverExpandDelayMs);
         CollapseDelayMs = (int)C(CollapseDelayMs, 150, 2000, Motion.HoverCollapseDelayMs);
@@ -109,7 +115,7 @@ public sealed class CustomSettings
     public void CopyLookTo(LookValues target)
     {
         target.AccentPreset = AccentPreset; target.CustomAccent = CustomAccent;
-        target.CornerRadius = CornerRadius; target.TileRadius = TileRadius; target.LinkTileRadius = LinkTileRadius;
+        target.CornerRadius = CornerRadius; target.TileRadius = TileRadius; target.LinkTileRadius = LinkTileRadius; target.ButtonRoundness = ButtonRoundness;
         target.MotionFeel = MotionFeel; target.MotionSpeed = MotionSpeed;
         target.Highlight = Highlight; target.ShadowIntensity = ShadowIntensity; target.GlowEnabled = GlowEnabled; target.GlowIntensity = GlowIntensity;
     }
@@ -117,7 +123,7 @@ public sealed class CustomSettings
     public void ApplyLook(LookValues l)
     {
         AccentPreset = l.AccentPreset; CustomAccent = l.CustomAccent;
-        CornerRadius = l.CornerRadius; TileRadius = l.TileRadius; LinkTileRadius = l.LinkTileRadius;
+        CornerRadius = l.CornerRadius; TileRadius = l.TileRadius; LinkTileRadius = l.LinkTileRadius; ButtonRoundness = l.ButtonRoundness;
         MotionFeel = l.MotionFeel; MotionSpeed = l.MotionSpeed;
         Highlight = l.Highlight; ShadowIntensity = l.ShadowIntensity; GlowEnabled = l.GlowEnabled; GlowIntensity = l.GlowIntensity;
     }
@@ -131,6 +137,8 @@ public sealed class LookValues
     public double CornerRadius { get; set; } = Theme.DefaultCornerRadius;
     public double TileRadius { get; set; } = Theme.DefaultCornerRadiusSmall;
     public bool LinkTileRadius { get; set; } = true;
+    /// <summary>Button roundness, 0..1: 1 = full pills (default), 0 = softly squared buttons and segmented controls.</summary>
+    public double ButtonRoundness { get; set; } = 1.0;
     public string MotionFeel { get; set; } = "smooth";
     public double MotionSpeed { get; set; } = 1;
     public double Highlight { get; set; } = Theme.DefaultHighlight;
@@ -163,7 +171,7 @@ public static class BuiltInLooks
     {
         ("classic", "Classic", "The original look", new LookValues()),
         ("soft", "Soft", "Rounder, calmer motion", new LookValues { AccentPreset = "purple", CornerRadius = 32, TileRadius = 16, MotionFeel = "calm", MotionSpeed = 0.9, Highlight = 0.06, ShadowIntensity = 1.2 }),
-        ("sharp", "Sharp", "Smaller radius, snappy", new LookValues { AccentPreset = "blue", CornerRadius = 12, TileRadius = 6, MotionFeel = "snappy", MotionSpeed = 1.15, Highlight = 0.12, ShadowIntensity = 0.8 }),
+        ("sharp", "Sharp", "Smaller radius, snappy", new LookValues { AccentPreset = "blue", CornerRadius = 12, TileRadius = 6, ButtonRoundness = 0.35, MotionFeel = "snappy", MotionSpeed = 1.15, Highlight = 0.12, ShadowIntensity = 0.8 }),
         ("neon", "Neon", "Bright accent, stronger glow", new LookValues { AccentPreset = "teal", CornerRadius = 24, TileRadius = 12, MotionFeel = "bouncy", Highlight = 0.18, ShadowIntensity = 1.3, GlowIntensity = 1.5 }),
     };
 }

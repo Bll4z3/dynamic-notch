@@ -25,6 +25,16 @@ public static class Styles
         r["TileBrush"] = Theme.TileBrush;
         r["TileBorderBrush"] = Theme.TileBorderBrush;
         r["CardHoverBrush"] = Theme.CardHoverBrush;
+        // The accent palette (shared brushes, mutated in place on every accent change / cross-fade frame).
+        r["AccentBrush"] = Theme.AccentBrush;
+        r["AccentLightBrush"] = Theme.AccentLightBrush;
+        r["AccentDarkBrush"] = Theme.AccentDarkBrush;
+        r["AccentGlowBrush"] = Theme.AccentGlowBrush;
+        r["AccentTintBrush"] = Theme.AccentTintBrush;
+        r["AccentBorderBrush"] = Theme.AccentBorderBrush;
+        r["AccentReadableBrush"] = Theme.AccentReadableBrush;
+        r["AccentGradientBrush"] = Theme.AccentGradientBrush;
+        r["OnAccentBrush"] = Theme.OnAccentBrush;
         r["Radius"] = Theme.Radius;
         r["RadiusSmall"] = Theme.RadiusSmall;
 

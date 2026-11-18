@@ -51,7 +51,7 @@ internal sealed class ValueSlider : UserControl
         if (caption != null) text.Children.Add(new TextBlock { Text = caption, Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1 });
         head.Children.Add(text);
         _valueText.Style = SettingsUi.StyleOf("TimeText");
-        _valueText.Foreground = Theme.PrimaryText;
+        _valueText.Foreground = Theme.AccentReadableBrush;
         _valueText.VerticalAlignment = VerticalAlignment.Top;
         // The value sits in a small pill (tabular digits) so it reads at a glance and never jitters.
         var chip = new Border { Background = Theme.InputBrush, BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 1, 8, 2), VerticalAlignment = VerticalAlignment.Top, Child = _valueText };
@@ -60,10 +60,11 @@ internal sealed class ValueSlider : UserControl
         root.Children.Add(head);
 
         var trackHost = new Grid { Margin = new Thickness(0, Theme.S1, 0, 0) };
-        _track.FillBrush = Theme.AccentBrush;
+        _track.FillBrush = Theme.AccentTrackBrush;
+        _track.ThumbGlow = true;
         trackHost.Children.Add(_track);
         // Value bubble above the thumb.
-        _bubble.Background = Theme.AccentBrush;
+        _bubble.Background = Theme.AccentGradientBrush;
         _bubble.CornerRadius = new CornerRadius(9);
         _bubble.Padding = new Thickness(7, 1, 7, 2);
         _bubble.HorizontalAlignment = HorizontalAlignment.Left;
@@ -171,7 +172,8 @@ internal sealed class Segmented : Grid
     private const double LabelSize = 12.5, MinLabelSize = 10.5;
     private readonly (string id, string label)[] _options;
     private readonly Grid _cells = new();
-    private readonly Border _highlight = new(), _shine = new();
+    private readonly Border _highlight = new(), _shine = new(), _glow = new();
+    private readonly List<Border> _hovers = new();
     private readonly List<TextBlock> _labels = new();
     private readonly CompositionPropertySet _p;
     private readonly CompSpring _pos, _press;
@@ -194,8 +196,8 @@ internal sealed class Segmented : Grid
         double inner = TrackHeight - 2 * Inset;
         _highlight.HorizontalAlignment = HorizontalAlignment.Left;
         _highlight.CornerRadius = new CornerRadius(inner / 2);
-        _highlight.Background = Theme.AccentSubtleBrush;
-        _highlight.BorderBrush = Theme.AccentBrush;
+        _highlight.Background = Theme.AccentTintBrush;
+        _highlight.BorderBrush = Theme.AccentBorderBrush;
         _highlight.BorderThickness = new Thickness(1);
         _highlight.IsHitTestVisible = false;
         // A faint top sheen makes the highlight read as raised.
@@ -206,6 +208,12 @@ internal sealed class Segmented : Grid
         _shine.CornerRadius = _highlight.CornerRadius;
         _shine.HorizontalAlignment = HorizontalAlignment.Left;
         _shine.IsHitTestVisible = false;
+        // A soft accent glow under the selected segment (rides with the highlight).
+        _glow.HorizontalAlignment = HorizontalAlignment.Left;
+        _glow.Background = Theme.AccentHaloBrush;
+        _glow.Opacity = 0.45;
+        _glow.IsHitTestVisible = false;
+        Children.Add(_glow);
         Children.Add(_highlight);
         Children.Add(_shine);
 
@@ -215,6 +223,7 @@ internal sealed class Segmented : Grid
             int idx = i;
             var cell = new Grid { Background = Theme.TransparentBrush };
             var hover = new Border { Background = Theme.CardHoverBrush, CornerRadius = new CornerRadius(inner / 2), IsHitTestVisible = false, Margin = new Thickness(1) };
+            _hovers.Add(hover);
             cell.Children.Add(hover);
             Motions.HoverFade(cell, hover, () => idx != _index);
             var t = new TextBlock
@@ -234,6 +243,15 @@ internal sealed class Segmented : Grid
             _cells.Children.Add(cell);
         }
         Children.Add(_cells);
+        // Corners follow the button roundness token; the highlight stays concentric with the track.
+        ButtonShape.Register(this, () =>
+        {
+            double outer = ButtonShape.RadiusFor(TrackHeight);
+            var r = new CornerRadius(Math.Max(2, outer - Inset));
+            CornerRadius = new CornerRadius(outer);
+            _highlight.CornerRadius = _shine.CornerRadius = _glow.CornerRadius = r;
+            foreach (var h in _hovers) h.CornerRadius = r;
+        });
 
         var hv = Anim.VisualOf(_highlight, translation: true);
         var c = hv.Compositor;
@@ -241,7 +259,7 @@ internal sealed class Segmented : Grid
         _p.InsertScalar("w", 0);
         _pos = new CompSpring(_p, "i", Motion.TabHighlight, 0, precision: 0.05);
         _press = new CompSpring(_p, "k", Motion.Press, 0);
-        foreach (var el in new UIElement[] { _highlight, _shine })
+        foreach (var el in new UIElement[] { _highlight, _shine, _glow })
         {
             var v = Anim.VisualOf(el, translation: true);
             v.StartAnimation("Translation", Anim.Expr(c, "Vector3(p.i * p.w, 0, 0)", ("p", _p)));
@@ -250,11 +268,16 @@ internal sealed class Segmented : Grid
         SizeChanged += (_, e) =>
         {
             double cell = Math.Max(0, (e.NewSize.Width - 2 * Inset) / Math.Max(1, _options.Length));
+            // Height: stretch to the track's inner slot rather than a fixed value. At 125% (and other fractional
+            // scales) layout rounding makes the slot a fraction of a pixel shorter than `inner`, and a fixed
+            // height then gets its bottom edge clipped.
             _highlight.Width = _shine.Width = cell;
-            _highlight.Height = _shine.Height = inner;
+            _glow.Width = cell + 16;
+            _glow.Margin = new Thickness(-8, -8, 0, -8);
             _p.InsertScalar("w", (float)cell);
             foreach (var el in new UIElement[] { _highlight, _shine })
                 Anim.VisualOf(el).CenterPoint = new System.Numerics.Vector3((float)cell / 2, (float)inner / 2, 0);
+            Anim.VisualOf(_glow).CenterPoint = new System.Numerics.Vector3((float)cell / 2 + 8, (float)inner / 2 + 8, 0);
         };
         KeyDown += (_, e) =>
         {
@@ -280,7 +303,7 @@ internal sealed class Segmented : Grid
     /// <summary>A value none of the segments represents (e.g. a custom notch scale): no highlight.</summary>
     private void Unselect()
     {
-        _highlight.Opacity = _shine.Opacity = 0;
+        _highlight.Opacity = _shine.Opacity = _glow.Opacity = 0;
         _index = -1;
         for (int k = 0; k < _labels.Count; k++) { _labels[k].Foreground = Theme.SecondaryText; _labels[k].FontFamily = Theme.FontMedium; }
     }
@@ -288,6 +311,7 @@ internal sealed class Segmented : Grid
     private void Select(int i, bool animate)
     {
         _highlight.Opacity = _shine.Opacity = 1;
+        _glow.Opacity = 0.45;
         _index = i;
         if (animate) _pos.SetTarget(i, Motion.TabHighlight); else _pos.Snap(i);
         for (int k = 0; k < _labels.Count; k++)

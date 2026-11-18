@@ -72,7 +72,7 @@ internal sealed class GeneralTabView : Grid
         public SampleCard()
         {
             Background = Theme.CardBrush;
-            BorderBrush = Theme.CardBorderBrush;
+            BorderBrush = Theme.CardEdgeBrush;
             BorderThickness = new Thickness(1);
             CornerRadius = Theme.RadiusSmall;
             Padding = Theme.PadS3;

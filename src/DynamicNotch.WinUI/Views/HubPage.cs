@@ -257,7 +257,9 @@ public sealed class HubPage : Grid
                 i.HorizontalAlignment = HorizontalAlignment.Center;
                 i.VerticalAlignment = VerticalAlignment.Center;
             }
-            _on.Background = Theme.AccentBrush;
+            _on.Background = Theme.AccentGradientBrush;
+            _on.BorderBrush = Theme.AccentBorderBrush;
+            _on.BorderThickness = new Thickness(1);
             var iconHost = new Grid { IsHitTestVisible = false };
             if (wide)
             {
@@ -268,7 +270,7 @@ public sealed class HubPage : Grid
                 _disc.Background = Theme.QuietPillBrush;
                 _disc.BorderBrush = Theme.TileBorderBrush;
                 _disc.BorderThickness = new Thickness(1);
-                _discOn.Background = Theme.AccentBrush;
+                _discOn.Background = Theme.AccentGradientBrush;
                 iconHost.Children.Add(_disc);
                 iconHost.Children.Add(_discOn);
             }
@@ -355,7 +357,7 @@ public sealed class HubPage : Grid
             _button = new IconButton(26, Theme.IconSmall) { Icon = icon, Foreground = Theme.PrimaryText, Tooltip = tip, VerticalAlignment = VerticalAlignment.Center };
             _button.Click += () => IconClick?.Invoke();
             Children.Add(_button);
-            Track = new LevelTrack { Interactive = true, Margin = Theme.GapLeftS2, FillBrush = Theme.AccentBrush };
+            Track = new LevelTrack { Interactive = true, Margin = Theme.GapLeftS2, FillBrush = Theme.AccentTrackBrush };
             Track.UserChanged += v => _value.Text = Math.Round(v * 100).ToString(CultureInfo.CurrentCulture);
             SetColumn(Track, 1);
             Children.Add(Track);

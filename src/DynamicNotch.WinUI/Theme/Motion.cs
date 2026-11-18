@@ -57,6 +57,8 @@ public static class Motion
     // ---- Core presets (softer than v1: higher damping, small overshoot, longer settle) ---------
     /// <summary>The notch container morph (collapsed ⇄ pill ⇄ expanded).</summary>
     public static readonly SpringPreset Notch = SpringPreset.FromResponse(0.52, 0.80);
+    /// <summary>The leading axis of a notch morph (width when opening, height when closing): a little quicker, same damping.</summary>
+    public static readonly SpringPreset NotchLead = SpringPreset.FromResponse(0.44, 0.80);
 
     /// <summary>Horizontal page slides and the page-dot indicator.</summary>
     public static readonly SpringPreset Page = SpringPreset.FromResponse(0.48, 0.86);
@@ -147,6 +149,9 @@ public static class Motion
     public static readonly SpringPreset WindowOpen = SpringPreset.FromResponse(0.36, 0.8);
     public static readonly SpringPreset TabHighlight = SpringPreset.FromResponse(0.38, 0.82);
     public const double WindowStartScale = 0.94;
+    /// <summary>Settings: the tab bar's trailing end (slower than TabHighlight, so the bar stretches between tabs) and how far the window rises as it opens.</summary>
+    public static readonly SpringPreset TabTrail = SpringPreset.FromResponse(0.56, 0.9);
+    public const double WindowRise = 14;
 
     // ---- Page navigator ------------------------------------------------------------------------------
     /// <summary>Dots ⇄ icons morph: soft with a small overshoot.</summary>

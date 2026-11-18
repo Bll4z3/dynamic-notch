@@ -20,7 +20,7 @@ namespace DynamicNotch.Views;
 /// </summary>
 public sealed class PillSwitch : UserControl
 {
-    private readonly Border _ring = new(), _off = new(), _on = new();
+    private readonly Border _ring = new(), _off = new(), _on = new(), _halo = new();
     private readonly Ellipse _thumbOff = new(), _thumbOn = new();
     private readonly CompositionPropertySet _p;
     private readonly CompSpring _t, _shake, _press;
@@ -43,7 +43,16 @@ public sealed class PillSwitch : UserControl
         var track = new Grid { Width = Theme.SwitchWidth, Height = Theme.SwitchHeight, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         _off.CornerRadius = _on.CornerRadius = radius;
         _off.Background = new SolidColorBrush(Theme.SwitchOffColor);
-        _on.Background = Theme.AccentBrush; // "on" carries the accent (live)
+        _on.Background = Theme.AccentGradientBrush; // "on" carries the accent (live), with a little depth
+        _on.BorderBrush = Theme.AccentBorderBrush;
+        _on.BorderThickness = new Thickness(1);
+        // A soft accent halo behind the track, fading in with "on".
+        _halo.Width = Theme.SwitchWidth + 22;
+        _halo.Height = Theme.SwitchHeight + 18;
+        _halo.Margin = new Thickness(-11, -9, -11, -9);
+        _halo.Background = Theme.AccentHaloBrush;
+        _halo.IsHitTestVisible = false;
+        root.Children.Add(_halo);
         track.Children.Add(_off);
         track.Children.Add(_on);
         foreach (var (e, colour) in new[] { (_thumbOff, Theme.SwitchThumbOffColor), (_thumbOn, Theme.SwitchThumbOnColor) })
@@ -67,6 +76,7 @@ public sealed class PillSwitch : UserControl
         _shake = new CompSpring(_p, "s", Motion.Shake, 0, precision: 20);
         tv.StartAnimation("Translation", Anim.Expr(c, "Vector3(p.s, 0, 0)", ("p", _p)));
         Anim.VisualOf(_on).StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.t, 0, 1)", ("p", _p)));
+        Anim.VisualOf(_halo).StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.t, 0, 1) * (0.55 + 0.25 * p.k)", ("p", _p)));
         float travel = (float)(Theme.SwitchWidth - 2 * Theme.SwitchThumbInset - Theme.SwitchThumbSize);
         foreach (var (e, on) in new[] { (_thumbOff, false), (_thumbOn, true) })
         {

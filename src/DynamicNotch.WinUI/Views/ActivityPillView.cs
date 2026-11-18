@@ -323,7 +323,7 @@ public sealed class ActivityPillView : Grid
                 bool muted = a.On || level <= 0.001;
                 _icon.Data = muted ? Icons.VolumeMute : level < 0.34 ? Icons.VolumeLow : level < 0.67 ? Icons.VolumeMid : Icons.VolumeHigh;
                 accent = muted ? Theme.VolumeMutedColor : Theme.VolumeColor;
-                _track.FillBrush = Theme.AccentBrush;
+                _track.FillBrush = Theme.AccentTrackBrush;
                 _track.Dimmed = a.On;
                 _track.Indeterminate = false;
                 _track.SetValue(level, animate);
@@ -335,7 +335,7 @@ public sealed class ActivityPillView : Grid
             {
                 double level = a.Level ?? 0;
                 accent = Theme.BrightnessColor;
-                _track.FillBrush = Theme.AccentBrush;
+                _track.FillBrush = Theme.AccentTrackBrush;
                 _track.Dimmed = false;
                 _track.Indeterminate = false;
                 _track.SetValue(level, animate);
@@ -378,7 +378,7 @@ public sealed class ActivityPillView : Grid
                 _icon.Data = a.Failed ? Icons.Alert : a.On ? Icons.CheckCircle : Icons.Download;
                 _title.Text = a.Title;
                 SetSubtitle(a.On || _compact ? a.Subtitle : null);
-                _track.FillBrush = Theme.AccentBrush;
+                _track.FillBrush = Theme.AccentTrackBrush;
                 _track.Dimmed = false;
                 _track.Indeterminate = !a.On && a.Level == null;
                 if (a.Level is { } f) _track.SetValue(f, animate);

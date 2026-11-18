@@ -29,6 +29,7 @@ public sealed class MusicPage : Grid
     private CompSpring? _artPop;
     private bool _lastPlaying;
     private Windows.UI.Color _accent = Theme.AccentColor;
+    private bool _hasArtAccent;
 
     public MusicPage(MusicViewModel vm)
     {
@@ -163,8 +164,12 @@ public sealed class MusicPage : Grid
 
             var art = _vm.Artwork;
             _artImage.Visibility = art != null ? Visibility.Visible : Visibility.Collapsed;
-            var target = art == null ? Theme.AccentColor : AlbumColorService.Extract(art);
-            if (target != _accent) { _accent = target; _seek.SetAccent(target, animate: IsLoaded); }
+            if (art == null) { _hasArtAccent = false; _seek.FollowAccent(); }
+            else
+            {
+                var target = AlbumColorService.Extract(art);
+                if (!_hasArtAccent || target != _accent) { _accent = target; _hasArtAccent = true; _seek.SetAccent(target, animate: IsLoaded); }
+            }
             var source = await ImageLoader.ToSourceAsync(art);
             if (ReferenceEquals(art, _vm.Artwork)) _artBrush.ImageSource = source;
         }

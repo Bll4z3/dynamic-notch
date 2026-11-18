@@ -20,7 +20,9 @@ public sealed class SeekBar : Grid
 {
     private readonly CompositionPropertySet _p;
     private readonly CompSpring _hover;
-    private readonly CompositionColorBrush _fillBrush;
+    private readonly CompositionLinearGradientBrush _fillBrush;
+    private readonly CompositionColorGradientStop _stopA, _stopB;
+    private bool _followAccent = true;
     private readonly ShapeVisual _shapes;
     private bool _dragging, _seekable = true, _over;
     private double _value, _dragValue;
@@ -53,7 +55,21 @@ public sealed class SeekBar : Grid
         Bind(fill, "Size", $"Vector2(S.V > 0 ? Max({t}, S.W * S.V) : 0, {t})");
         Bind(fill, "Offset", $"Vector2(0, {mid} - {t} / 2)");
         Bind(fill, "CornerRadius", $"Vector2({t} / 2, {t} / 2)");
-        _fillBrush = c.CreateColorBrush(Theme.AccentColor);
+        // Accent gradient fill: base colour at the start, the light tint at the playhead (absolute mapping, so
+        // the brightest point always rides the leading edge as the fill grows).
+        var pal = AccentPalette.From(Theme.AccentColor);
+        _stopA = c.CreateColorGradientStop(0, pal.Base);
+        _stopB = c.CreateColorGradientStop(1, pal.Light);
+        _fillBrush = c.CreateLinearGradientBrush();
+        _fillBrush.MappingMode = CompositionMappingMode.Absolute;
+        _fillBrush.ColorStops.Add(_stopA);
+        _fillBrush.ColorStops.Add(_stopB);
+        _fillBrush.StartPoint = Vector2.Zero;
+        var end = c.CreateExpressionAnimation("Vector2(Max(1, S.W * S.V), 0)");
+        end.SetReferenceParameter("S", _p);
+        _fillBrush.StartAnimation("EndPoint", end);
+        // With no artwork the fill follows the live accent (including its cross-fades).
+        AccentBinding.Track(_fillBrush, (_, p) => { if (_followAccent) Paint(p, animate: false); });
         var fillShape = c.CreateSpriteShape(fill);
         fillShape.FillBrush = _fillBrush;
         _shapes.Shapes.Add(fillShape);
@@ -108,11 +124,27 @@ public sealed class SeekBar : Grid
     /// <summary>Blends the fill to a new accent colour (~0.7 s, like the WPF ring/accent spring).</summary>
     public void SetAccent(Color color, bool animate)
     {
-        if (!animate || !Anim.Enabled) { _fillBrush.StopAnimation("Color"); _fillBrush.Color = color; return; }
-        var a = _fillBrush.Compositor.CreateColorKeyFrameAnimation();
-        a.InsertKeyFrame(1, color);
-        a.Duration = TimeSpan.FromMilliseconds(700);
-        _fillBrush.StartAnimation("Color", a);
+        _followAccent = false;
+        Paint(AccentPalette.From(color), animate);
+    }
+
+    /// <summary>Follows the live accent palette (no artwork to take a colour from).</summary>
+    public void FollowAccent()
+    {
+        _followAccent = true;
+        Paint(Theme.Palette, animate: false);
+    }
+
+    private void Paint(AccentPalette p, bool animate)
+    {
+        foreach (var (stop, color) in new[] { (_stopA, p.Base), (_stopB, p.Light) })
+        {
+            if (!animate || !Anim.Enabled) { stop.StopAnimation("Color"); stop.Color = color; continue; }
+            var a = stop.Compositor.CreateColorKeyFrameAnimation();
+            a.InsertKeyFrame(1, color);
+            a.Duration = TimeSpan.FromMilliseconds(Services.ThemeService.AlbumFadeMs);
+            stop.StartAnimation("Color", a);
+        }
     }
 
     private void OnPressed(object sender, PointerRoutedEventArgs e)

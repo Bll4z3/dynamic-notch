@@ -383,6 +383,14 @@ public sealed partial class NotchWindow : Window
         }
 
         if (immediate) { _width.Snap(w); _height.Snap(h); }
+        else if (preset == Motion.Notch && (h != _height.Target || w != _width.Target))
+        {
+            // Fluid morph: opening, the width leads and the height follows (the island spreads, then drops);
+            // closing, the height leads (it lifts, then draws in). Same springs, a few dozen ms apart in feel.
+            bool opening = h > _height.Target + 0.5;
+            _width.SetTarget(w, opening ? Motion.NotchLead : Motion.Notch);
+            _height.SetTarget(h, opening ? Motion.Notch : Motion.NotchLead);
+        }
         else { _width.SetTarget(w, preset); _height.SetTarget(h, preset); }
 
         // Content leaving the stage fades out right away (faster than it arrives); incoming content
@@ -406,7 +414,7 @@ public sealed partial class NotchWindow : Window
         _frame.SetAskActive(_state == NotchState.Expanded && Vm.IsAskPage);
 
         Bars.IsPlaying = _state == NotchState.Collapsed && playing && !minimal && !timer;
-        _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage);
+        _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage, Vm.Music.IsPlaying);
         Vm.Music.IsVisible = _state == NotchState.Expanded && Vm.IsMusicPage;
         Vm.Usage.IsVisible = _state == NotchState.Expanded && Vm.CurrentPage == PageId.Usage;
         UpdateCompactTimer();

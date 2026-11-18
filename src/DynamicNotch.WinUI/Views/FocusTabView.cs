@@ -26,7 +26,7 @@ internal static class SettingsUi
 
     public static Border Card(UIElement child, Thickness? padding = null) => new()
     {
-        Background = Theme.CardBrush, BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1),
+        Background = Theme.CardSurfaceBrush, BorderBrush = Theme.CardEdgeBrush, BorderThickness = new Thickness(1),
         CornerRadius = Theme.Radius, Padding = padding ?? Theme.PageRowPadding, Child = child,
     };
 
@@ -200,7 +200,7 @@ internal sealed class FocusTabView : Grid
             Height = RowHeight;
             Margin = new Thickness(0, 0, 0, Theme.S1 + 2);
             Background = Theme.CardBrush;
-            BorderBrush = Theme.CardBorderBrush;
+            BorderBrush = Theme.CardEdgeBrush;
             BorderThickness = new Thickness(1);
             CornerRadius = new CornerRadius(RowHeight / 2);
             Padding = new Thickness(Theme.S3, 0, Theme.S2, 0);

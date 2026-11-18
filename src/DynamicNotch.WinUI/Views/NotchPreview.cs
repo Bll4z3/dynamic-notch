@@ -210,7 +210,7 @@ internal sealed class NotchPreview : Grid
     private void OnTheme(ThemeService.Part parts)
     {
         if (parts.HasFlag(ThemeService.Part.Radius)) _r.SetTarget(Theme.CornerRadius, Motion.Notch);
-        if (parts.HasFlag(ThemeService.Part.Surface) || parts.HasFlag(ThemeService.Part.Glow)) ApplySurface();
+        if (parts.HasFlag(ThemeService.Part.Surface) || parts.HasFlag(ThemeService.Part.Glow) || parts.HasFlag(ThemeService.Part.Visualizer)) ApplySurface();
         if (parts.HasFlag(ThemeService.Part.Motion)) ReplayMotion();
     }
 
@@ -237,7 +237,14 @@ internal sealed class NotchPreview : Grid
         _shadow.Opacity = (float)Math.Min(1, Theme.ShadowOpacity * 1.2);
         var s = _theme.Current;
         _glow.Opacity = s.GlowEnabled ? Math.Min(1, 0.55 * s.GlowIntensity) : 0;
+        foreach (var b in _bars)
+        {
+            b.Background = s.VisualizerColor == "accent" ? Theme.AccentBarBrush : Theme.PrimaryText;
+            b.Visibility = s.Visualizer == "off" ? Visibility.Collapsed : Visibility.Visible;
+        }
     }
+
+    private readonly List<Border> _bars = new();
 
     /// <summary>Plays expand ⇄ collapse with the current motion feel and speed, then returns to the chosen mode.</summary>
     private void ReplayMotion()
@@ -320,7 +327,12 @@ internal sealed class NotchPreview : Grid
         var time = new TextBlock { Text = ClockService.FormatTime(new DateTime(2026, 1, 1, 9, 41, 0)), Style = SettingsUi.StyleOf("ClockTimeText"), HorizontalAlignment = HorizontalAlignment.Center };
         _collapsed.Children.Add(time);
         var bars = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2.5, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = Theme.CollapsedPadding };
-        foreach (var hgt in new[] { 6.0, 12, 8, 10 }) bars.Children.Add(new Border { Width = 3, Height = hgt, CornerRadius = new CornerRadius(1.5), Background = Theme.PrimaryText, VerticalAlignment = VerticalAlignment.Center });
+        foreach (var hgt in new[] { 6.0, 12, 8, 10 })
+        {
+            var bar = new Border { Width = 3, Height = hgt, CornerRadius = new CornerRadius(1.5), Background = Theme.AccentBarBrush, VerticalAlignment = VerticalAlignment.Center };
+            _bars.Add(bar);
+            bars.Children.Add(bar);
+        }
         _collapsed.Children.Add(bars);
     }
 

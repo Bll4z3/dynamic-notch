@@ -35,7 +35,10 @@ public sealed partial class NotchWindow
             UpdateHitArea();
             UpdateRegion();
         }
-        if (parts.HasFlag(ThemeService.Part.Surface)) _shape.SetSurface(Theme.HighlightColor, Theme.ShadowOpacity);
+        if (parts.HasFlag(ThemeService.Part.Surface))
+        {
+            _shape.SetSurface(Theme.HighlightColor, Theme.ShadowOpacity);
+        }
         if (parts.HasFlag(ThemeService.Part.Glow) || parts.HasFlag(ThemeService.Part.Accent))
         {
             UpdateGlowColor(animate);
@@ -44,6 +47,7 @@ public sealed partial class NotchWindow
         if (parts.HasFlag(ThemeService.Part.Visualizer))
         {
             Bars.Style = s.Visualizer;
+            Bars.Colorful = s.VisualizerColor == "accent";
             UpdateState();
         }
         if (parts.HasFlag(ThemeService.Part.Layout)) PositionWindow();
