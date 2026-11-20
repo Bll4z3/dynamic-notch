@@ -114,11 +114,9 @@ public static class Theme
     public const double DefaultHighlight = 0x14 / 255.0;
     /// <summary>Multiplies every shadow's opacity (0..1.5, default 1).</summary>
     public static double ShadowIntensity { get; internal set; } = 1;
-    /// <summary>Soft shadow under the notch (compositor drop shadow; fits inside <see cref="ShadowMargin"/>).</summary>
+    /// <summary>Soft shadow under the notch (drawn by NotchShadowWindow, inside the host's <see cref="ShadowRoom"/>).</summary>
     public const double ShadowBlur = 16, ShadowOffsetY = 4, BaseShadowOpacity = 0.5;
     public static double ShadowOpacity => BaseShadowOpacity * ShadowIntensity;
-    /// <summary>Extra clickable/drawn band under the expanded notch so its shadow isn't cut off.</summary>
-    public const double ShadowMargin = 16;
     public const double DropZoneDash = 4, DropZoneThickness = 1.5;
 
     // ---- Battery ring ------------------------------------------------------------------------
@@ -239,6 +237,23 @@ public static class Theme
     public const double SettingsTabBarWidth = 3, SettingsTabBarHeight = 16;
     public const int SettingsEntranceStepMs = 32, SettingsEntranceMax = 10;
     public const double SettingsEntranceRise = 12;
+
+    // ---- Settings padding: one set of rules for every tab, button, field, chip and card ----------------
+    /// <summary>
+    /// Horizontal inset for content inside a rounded shape. It grows with the shape's corner radius, so text and
+    /// controls always clear the curve (a fixed 12 px looked pushed to the left once the corners got rounder).
+    /// </summary>
+    public static double InsetFor(double radius, double min = S4) => Math.Max(min, Math.Round(radius * 0.45 + 6));
+    /// <summary>Padding inside Settings cards: even left / right inset from the live corner radius.</summary>
+    public static Thickness SettingsCardPadding => new(InsetFor(CornerRadius), S2, InsetFor(CornerRadius), S2);
+    /// <summary>Padding inside a Settings row card (the Pages list): same even inset as a card.</summary>
+    public static Thickness RowCardPadding => new(InsetFor(CornerRadius, S3), S2, InsetFor(CornerRadius, S3), S2);
+    /// <summary>Even padding inside text fields and dropdowns in Settings (left = right).</summary>
+    public static readonly Thickness SettingsFieldPadding = new(S3 + 2, S2, S3 + 2, S2);
+    /// <summary>Even padding for small value chips, badges and tags (left = right; text is centred).</summary>
+    public static readonly Thickness ChipPadding = new(S2 + 2, 1, S2 + 2, 2);
+    /// <summary>Settings ▸ Customisation rows: width of the control column, the narrowest label before the control wraps under it, row height.</summary>
+    public const double SettingsControlWidth = 280, SettingsLabelMinWidth = 150, SettingsRowMinHeight = 48;
 
     // ---- Settings: Pages tab + switch -------------------------------------------------------------
     public const double SwitchWidth = 42, SwitchHeight = 24, SwitchThumbSize = 18, SwitchThumbInset = 3;

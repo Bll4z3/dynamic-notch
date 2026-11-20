@@ -11,7 +11,7 @@ namespace DynamicNotch.Services;
 /// <summary>
 /// The single owner of the live visual tokens (Settings ▸ Customisation): accent (+ hover, subtle tint and
 /// on-accent text), corner radii, motion feel / speed, surface strength (border highlight, shadow, glow),
-/// the visualiser, notch scale / position, the collapsed notch's items and the hover timings. Views read
+/// the visualiser, notch scale / monitor, the collapsed notch's items and the hover timings. Views read
 /// the tokens from <see cref="Theme"/> / <see cref="Motion"/>; this service changes them and tells
 /// everything that caches a value:
 /// - accent: shared brushes are cross-faded in place (~250 ms; a frame callback is attached only while
@@ -24,7 +24,7 @@ namespace DynamicNotch.Services;
 public sealed class ThemeService
 {
     [Flags]
-    public enum Part { None = 0, Accent = 1, Radius = 2, Motion = 4, Surface = 8, Glow = 16, Visualizer = 32, Layout = 64, Collapsed = 128, Behaviour = 256, Sounds = 512, Performance = 1024, All = 0x7FF }
+    public enum Part { None = 0, Accent = 1, Radius = 2, Motion = 4, Surface = 8, Glow = 16, Visualizer = 32, Layout = 64, Collapsed = 128, Behaviour = 256, Performance = 1024, All = 0x5FF }
 
     private readonly SettingsService _settings;
     private readonly List<WeakReference<FrameworkElement>> _roots = new();
@@ -55,7 +55,7 @@ public sealed class ThemeService
     /// <summary>Raised (UI thread) after tokens changed; the argument says which parts.</summary>
     public event Action<Part>? Changed;
 
-    /// <summary>Raised when a token-driven element should replay something (accent ripple, motion demo, sound bars).</summary>
+    /// <summary>Raised when a token-driven element should replay something (accent ripple, motion demo).</summary>
     public event Action<Part>? Demo;
 
     // ---- Start-up ------------------------------------------------------------------------------------------
@@ -91,7 +91,7 @@ public sealed class ThemeService
         ApplyDiff(before, Current, animate);
     }
 
-    /// <summary>Replaces the whole customisation (Looks, reset, import, undo) and animates to it.</summary>
+    /// <summary>Replaces the whole customisation (reset, import, undo) and animates to it.</summary>
     public void ReplaceAll(CustomSettings next, bool animate = true)
     {
         var before = Current.Clone();
@@ -119,10 +119,9 @@ public sealed class ThemeService
         }
         if (a.GlowEnabled != b.GlowEnabled || a.GlowIntensity != b.GlowIntensity || a.GlowSource != b.GlowSource) parts |= Part.Glow;
         if (a.Visualizer != b.Visualizer || a.VisualizerColor != b.VisualizerColor) parts |= Part.Visualizer;
-        if (a.NotchScale != b.NotchScale || a.TopOffset != b.TopOffset || a.Monitor != b.Monitor) parts |= Part.Layout;
+        if (a.NotchScale != b.NotchScale || a.Monitor != b.Monitor) parts |= Part.Layout;
         if (a.ShowBatteryRing != b.ShowBatteryRing || a.ShowClock != b.ShowClock || a.ShowDate != b.ShowDate || a.ClockFormat != b.ClockFormat) parts |= Part.Collapsed;
         if (a.HoverDelayMs != b.HoverDelayMs || a.CollapseDelayMs != b.CollapseDelayMs) parts |= Part.Behaviour;
-        if (a.SoundsEnabled != b.SoundsEnabled || a.SoundPreset != b.SoundPreset || a.SoundVolume != b.SoundVolume || !a.SoundEvents.SequenceEqual(b.SoundEvents)) parts |= Part.Sounds;
         if (a.PerformanceMode != b.PerformanceMode) parts |= Part.Performance;
         if (parts != Part.None) Changed?.Invoke(parts);
     }
@@ -228,6 +227,7 @@ public sealed class ThemeService
             CompositionTarget.Rendering -= h;
             _radiusWalkPending = false;
             foreach (var w in _roots) if (w.TryGetTarget(out var root)) RefreshRadii(root);
+            Insets.Refresh(); // card padding follows the radius
             RadiusChanged?.Invoke();
         };
         CompositionTarget.Rendering += h;

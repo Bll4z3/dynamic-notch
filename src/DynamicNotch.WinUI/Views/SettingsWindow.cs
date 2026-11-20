@@ -26,7 +26,9 @@ namespace DynamicNotch.Views;
 /// <summary>
 /// The small Settings window, styled like the notch (same as the WPF one): a black card with the
 /// global radius, a hairline highlight and a soft shadow, on a see-through window. It opens and closes
-/// with a scale + fade spring, closes on Esc or the × button, and drags by its header band only.
+/// with a scale + fade spring, closes on Esc or the × button, and drags by its header band only: that band
+/// is a native caption region (Windows moves the window itself, like any title bar), with every button or
+/// control inside it cut out as a pass-through region so it still takes clicks.
 /// The tab list is data-driven (<see cref="SettingsViewModel.Tabs"/>) with a highlight that springs
 /// between tabs. Only one instance exists (<see cref="ShowSingle"/>). All motion is on the compositor.
 /// </summary>
@@ -50,6 +52,8 @@ internal sealed class SettingsWindow : Window
     private readonly DispatcherQueueTimer _closeTimer;
     private bool _closing;
     private SpriteVisual? _caster;
+    private readonly InputNonClientPointerSource _nonClient;
+    private bool _dragRegionsQueued;
 
     /// <summary>Raised with the window handle when it opens / IntPtr.Zero when it closes (for the keyboard hook).</summary>
     public static event Action<IntPtr>? HandleChanged;
@@ -112,11 +116,11 @@ internal sealed class SettingsWindow : Window
         _tabHighlight.BorderThickness = new Thickness(1);
         list.Children.Add(_tabHighlight);
         // The accent bar beside the selected tab, with a soft halo; it stretches as it travels (see Motion below).
-        _tabGlow.Width = 26;
+        _tabGlow.Width = 18;
         _tabGlow.Height = Theme.SettingsTabHeight;
         _tabGlow.HorizontalAlignment = HorizontalAlignment.Left;
         _tabGlow.VerticalAlignment = VerticalAlignment.Top;
-        _tabGlow.Margin = new Thickness(-11, 0, 0, 0);
+        _tabGlow.Margin = new Thickness(-Theme.S3, 0, 0, 0);
         _tabGlow.Background = Theme.AccentHaloBrush;
         _tabGlow.IsHitTestVisible = false;
         list.Children.Add(_tabGlow);
@@ -125,7 +129,7 @@ internal sealed class SettingsWindow : Window
         _tabBar.CornerRadius = new CornerRadius(Theme.SettingsTabBarWidth / 2);
         _tabBar.HorizontalAlignment = HorizontalAlignment.Left;
         _tabBar.VerticalAlignment = VerticalAlignment.Top;
-        _tabBar.Margin = new Thickness(1, (Theme.SettingsTabHeight - Theme.SettingsTabBarHeight) / 2, 0, 0);
+        _tabBar.Margin = new Thickness(-(Theme.S2 - 1), (Theme.SettingsTabHeight - Theme.SettingsTabBarHeight) / 2, 0, 0);
         _tabBar.Background = Theme.AccentBarBrush;
         _tabBar.IsHitTestVisible = false;
         list.Children.Add(_tabBar);
@@ -234,17 +238,14 @@ internal sealed class SettingsWindow : Window
         vm.PropertyChanged += OnVmChanged;
         ShowTab(animate: false);
 
-        // Drag only from the header band at the top of the card, and never from a control inside it.
-        // (Every container here is a Grid or Border, so testing the source's type alone made the whole
-        // window draggable, including presses on buttons, switches and empty content.)
-        _card.PointerPressed += (_, e) =>
-        {
-            var pt = e.GetCurrentPoint(_card);
-            if (!pt.Properties.IsLeftButtonPressed || pt.Position.Y > Theme.SettingsDragBandHeight) return;
-            if (IsInteractive(e.OriginalSource as DependencyObject)) return;
-            Native.BeginWindowDrag(_hwnd);
-            e.Handled = true;
-        };
+        // Dragging: the header band at the top of the card is a native caption region, so Windows moves the
+        // window itself (smooth, like any title bar). It used to start a system move loop from inside the XAML
+        // pointer handler (WM_NCLBUTTONDOWN sent from PointerPressed), which blocked the UI thread's input
+        // processing for the whole drag and made the window trail behind the pointer. Buttons and other
+        // controls inside the band are pass-through regions, so they keep working.
+        _nonClient = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
+        _root.LayoutUpdated += (_, _) => QueueDragRegions();
+        _root.Loaded += (_, _) => QueueDragRegions();
         _root.KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { AnimateClose(); e.Handled = true; } };
         Closed += (_, _) =>
         {
@@ -267,16 +268,57 @@ internal sealed class SettingsWindow : Window
     /// <summary>Marks an element (a tab row, a list row…) that must never start a window drag.</summary>
     internal const string NoDragTag = "settings:nodrag";
 
-    /// <summary>True when the element, or any parent up to the card, is something the user clicks to act.</summary>
-    private bool IsInteractive(DependencyObject? d)
+    /// <summary>Something the user clicks to act: it must never become part of the drag region.</summary>
+    private static bool IsInteractive(DependencyObject d) =>
+        d is IconButton or PillButton or TextButton or Control || d is FrameworkElement { Tag: NoDragTag };
+
+    /// <summary>Recomputes the drag regions once, after the current burst of layout passes.</summary>
+    private void QueueDragRegions()
     {
-        for (; d != null && !ReferenceEquals(d, _card); d = VisualTreeHelper.GetParent(d))
-        {
-            if (d is IconButton or PillButton or TextButton or Control or Microsoft.UI.Xaml.Documents.Hyperlink) return true;
-            if (d is FrameworkElement { Tag: NoDragTag }) return true;
-        }
-        return false;
+        if (_dragRegionsQueued || _hidden) return;
+        _dragRegionsQueued = true;
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => { _dragRegionsQueued = false; UpdateDragRegions(); });
     }
+
+    /// <summary>
+    /// Caption = the header band across the top of the card; pass-through = every interactive element that
+    /// overlaps it (the close button, the preview's mode switch…), in physical pixels of the client area.
+    /// Only the part of the tree that overlaps the band is visited.
+    /// </summary>
+    private void UpdateDragRegions()
+    {
+        if (_card.XamlRoot == null || _card.ActualWidth <= 0) return;
+        double scale = _card.XamlRoot.RasterizationScale;
+        var origin = _card.TransformToVisual(_root).TransformPoint(new Windows.Foundation.Point(0, 0));
+        var band = new Windows.Foundation.Rect(origin.X, origin.Y, _card.ActualWidth, Math.Min(Theme.SettingsDragBandHeight, _card.ActualHeight));
+        var pass = new List<RectInt32>();
+        CollectInteractive(_card, band, scale, pass);
+        try
+        {
+            _nonClient.SetRegionRects(NonClientRegionKind.Caption, new[] { ToPixels(band, scale) });
+            _nonClient.SetRegionRects(NonClientRegionKind.Passthrough, pass.ToArray());
+        }
+        catch { /* the window is closing */ }
+    }
+
+    private void CollectInteractive(DependencyObject parent, Windows.Foundation.Rect band, double scale, List<RectInt32> pass)
+    {
+        int n = VisualTreeHelper.GetChildrenCount(parent);
+        for (int i = 0; i < n; i++)
+        {
+            if (VisualTreeHelper.GetChild(parent, i) is not FrameworkElement el) continue;
+            if (el.Visibility != Visibility.Visible || !el.IsHitTestVisible || el.ActualWidth <= 0 || el.ActualHeight <= 0) continue;
+            var p = el.TransformToVisual(_root).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var r = new Windows.Foundation.Rect(p.X, p.Y, el.ActualWidth, el.ActualHeight);
+            var hit = r; hit.Intersect(band);
+            if (hit.IsEmpty || hit.Width <= 0 || hit.Height <= 0) continue; // nothing under the band: skip the whole subtree
+            if (IsInteractive(el)) pass.Add(ToPixels(hit, scale));
+            else CollectInteractive(el, band, scale, pass);
+        }
+    }
+
+    private static RectInt32 ToPixels(Windows.Foundation.Rect r, double scale) =>
+        new((int)Math.Floor(r.X * scale), (int)Math.Floor(r.Y * scale), (int)Math.Ceiling(r.Width * scale), (int)Math.Ceiling(r.Height * scale));
 
     /// <summary>Opens the window, or brings the existing one to the front.</summary>
     /// <summary>A new UI font: refresh the open window's text with a short cross-fade.</summary>
@@ -304,6 +346,7 @@ internal sealed class SettingsWindow : Window
             if (existing._hidden)
             {
                 existing._hidden = false;
+                existing.QueueDragRegions();
                 existing._closing = false;
                 existing.AppWindow.Show();
                 Native.MakeSeeThroughPopup(existing._hwnd);
@@ -462,9 +505,13 @@ internal sealed class SettingsWindow : Window
         var hover = new Border { Background = Theme.CardHoverBrush, CornerRadius = Theme.RadiusSmall, IsHitTestVisible = false };
         row.Children.Add(hover);
         Motions.HoverFade(row, hover, () => !ReferenceEquals(tab, _vm.SelectedTab));
-        var line = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(Theme.S3 + 2, 0, 0, 0) };
+        var line = new Grid { VerticalAlignment = VerticalAlignment.Center };
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Insets.Register(line, () => { double inset = Theme.InsetFor(Theme.CornerRadiusSmall); line.Margin = new Thickness(inset, 0, inset, 0); });
         var icon = new VectorIcon { Data = tab.Icon, Size = Theme.IconSmall, Foreground = Theme.SecondaryText, VerticalAlignment = VerticalAlignment.Center };
-        var label = new TextBlock { Text = tab.Title, Style = AskPage.TextStyle("BaseText"), Margin = Theme.GapLeftS3, VerticalAlignment = VerticalAlignment.Center };
+        var label = new TextBlock { Text = tab.Title, Style = AskPage.TextStyle("BaseText"), Margin = Theme.GapLeftS3, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        Grid.SetColumn(label, 1);
         line.Children.Add(icon);
         line.Children.Add(label);
         row.Children.Add(line);
@@ -498,7 +545,7 @@ internal sealed class ApiKeyTabView : StackPanel
     private readonly PasswordBox _box = new();
     private readonly IconButton _eye;
     private readonly PillButton _remove;
-    private readonly VectorIcon _check = new() { Data = Icons.Check, Size = Theme.IconSmall, Foreground = Theme.SuccessBrush, Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center };
+    private readonly VectorIcon _check = new() { Data = Icons.Check, Size = Theme.IconSmall, Foreground = Theme.SuccessBrush, Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
     private readonly TextBlock _status = new(), _test = new();
     private readonly CompSpring _checkSpring;
 
@@ -524,7 +571,7 @@ internal sealed class ApiKeyTabView : StackPanel
         _box.FontFamily = Theme.MonoFont;
         _box.FontSize = Theme.FontBody;
         _box.Height = Theme.SettingsFieldHeight;
-        _box.Padding = Theme.AskInputPadding;
+        _box.Padding = Theme.SettingsFieldPadding;
         _box.VerticalContentAlignment = VerticalAlignment.Center;
         _box.SelectionHighlightColor = Theme.AccentBrush;
         InputStyle.Apply(_box);
@@ -616,6 +663,7 @@ internal sealed class ApiKeyTabView : StackPanel
     {
         if (!_vm.Save(_box.Password.Trim())) return;
         _box.Password = ""; // never show the full key after saving
+        _check.Visibility = Visibility.Visible;
         _checkSpring.Snap(0);
         _checkSpring.SetTarget(1, Motion.Pop);
     }

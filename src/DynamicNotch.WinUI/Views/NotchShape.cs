@@ -70,7 +70,12 @@ public sealed class NotchShape
         bodyGroup.Children.InsertAtTop(Shoulder(left: true));
         bodyGroup.Children.InsertAtTop(Shoulder(left: false));
 
-        root.Children.InsertAtTop(caster);
+        // The shadow is not part of this tree: the notch window is clipped to its body by a window region (so
+        // only the notch takes clicks), and that region cut the shadow off along the bottom edge. It's handed out
+        // as Shadow and drawn by NotchShadowWindow, a click-through window right under the notch.
+        Shadow = c.CreateContainerVisual();
+        Shadow.Size = size;
+        Shadow.Children.InsertAtTop(caster);
         root.Children.InsertAtTop(bodyGroup);
 
         // Inner highlight: a thin white line just inside the sides and bottom, fading in from the top (the top
@@ -143,6 +148,9 @@ public sealed class NotchShape
     }
 
     public Compositor Compositor { get; }
+
+    /// <summary>The soft shadow (host coordinates, same size as the host), for <see cref="NotchShadowWindow"/>.</summary>
+    public ContainerVisual Shadow { get; }
 
     /// <summary>"W" and "H": the notch body size in DIPs (animated by the window's springs).</summary>
     public CompositionPropertySet Props { get; }

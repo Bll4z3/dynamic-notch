@@ -13,7 +13,7 @@ public sealed record SettingsTab(string Title, string Icon, object Content);
 public sealed class SettingsViewModel : ObservableObject
 {
     public SettingsViewModel(SecretStore secrets, ClaudeService claude, PageRegistry pages, SettingsService settings, FocusTimerViewModel timer,
-                             UpdateService updates, FontService fonts, ThemeService theme, SoundService sounds)
+                             UpdateService updates, FontService fonts, ThemeService theme)
     {
         ApiKey = new ApiKeyTabViewModel(secrets, claude);
         Pages = new PagesTabViewModel(pages);
@@ -21,7 +21,7 @@ public sealed class SettingsViewModel : ObservableObject
         General = new GeneralTabViewModel(settings, fonts);
         Pills = new PillsTabViewModel(settings);
         Updates = new UpdatesTabViewModel(settings, updates);
-        Customisation = new CustomisationTabViewModel(settings, theme, sounds, fonts);
+        Customisation = new CustomisationTabViewModel(settings, theme, fonts);
         Tabs = new ObservableCollection<SettingsTab>
         {
             new("General", Icons.Settings, General),

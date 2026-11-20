@@ -156,7 +156,7 @@ internal sealed class PagesTabView : Grid
             _card.BorderBrush = Theme.CardEdgeBrush;
             _card.BorderThickness = new Thickness(1);
             _card.CornerRadius = Theme.Radius;
-            _card.Padding = new Thickness(Theme.S1, Theme.S2, Theme.S3, Theme.S2);
+            Insets.Register(_card, () => _card.Padding = new Thickness(Theme.S1, Theme.S2, Theme.RowCardPadding.Right, Theme.S2));
             _card.MinHeight = Theme.PageRowHeight;
             root.Children.Add(_card);
             _ring.CornerRadius = new CornerRadius(Theme.CornerRadius + 2);

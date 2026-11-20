@@ -60,7 +60,8 @@ internal sealed class UpdatesTabView : Grid
     {
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var top = new StackPanel();
+        // Right margin: the cards line up with every other tab's (which leave room for a scroll bar).
+        var top = new StackPanel { Margin = new Thickness(0, 0, Theme.S3, 0) };
         top.Children.Add(SettingsUi.Title("Updates"));
         top.Children.Add(SettingsUi.Subtitle(vm.VersionText));
 

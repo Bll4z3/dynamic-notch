@@ -27,7 +27,7 @@
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <AssemblyName>DynamicNotch</AssemblyName>
     <RootNamespace>DynamicNotch</RootNamespace>
-    <Version>2.10.5</Version>
+    <Version>2.11.0</Version>
     <!-- Program.cs owns Main (single-instance check before XAML starts). -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
@@ -51,8 +51,6 @@
          Outfit and Space Grotesk for the font picker (Settings ▸ General). -->
     <Content Include="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Assets\Fonts\*-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
-    <!-- UI sounds: synthesised by tools/SoundGen (original, royalty-free), embedded so nothing is read from disk. -->
-    <EmbeddedResource Include="Assets\Sounds\*.wav" LogicalName="Sounds.%(Filename).wav" />
   </ItemGroup>
 
 </Project>

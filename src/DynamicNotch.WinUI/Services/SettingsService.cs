@@ -42,7 +42,7 @@ public sealed class AppSettings
     /// <summary>The notch's own Do Not Disturb: app notification pills are held back (they still go to the history).</summary>
     public bool DoNotDisturb { get; set; }
 
-    // ---- Settings ▸ Customisation (accent, shape, sounds, motion, notch look, behaviour, looks) ----
+    // ---- Settings ▸ Customisation (accent, shape, motion, notch look, behaviour, performance) ----
     public CustomSettings Custom { get; set; } = new();
 
     // ---- Updates (Settings ▸ Updates) ----
@@ -67,15 +67,26 @@ public sealed class SettingsService
 
     public void Load()
     {
+        bool legacy = false;
         try
         {
             if (File.Exists(_path))
-                Current = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path)) ?? new AppSettings();
+            {
+                var text = File.ReadAllText(_path);
+                Current = JsonSerializer.Deserialize<AppSettings>(text) ?? new AppSettings();
+                legacy = RemovedKeys.Any(k => text.Contains($"\"{k}\"", StringComparison.Ordinal));
+            }
         }
         catch { Current = new AppSettings(); }
         Current.FocusRoutine = FocusRoutine.Sanitize(Current.FocusRoutine); // a hand-edited file can't break the timer
         Current.Custom = (Current.Custom ?? new CustomSettings()).Sanitize();
+        // A file from an older version: unknown keys are ignored on load; rewrite it once so they're gone for good.
+        if (legacy) Save();
     }
+
+    /// <summary>Keys older versions saved for settings that no longer exist (2.11: Sounds, Looks, Distance from the top).</summary>
+    private static readonly string[] RemovedKeys =
+        { "SoundsEnabled", "SoundPreset", "SoundVolume", "SoundEvents", "SavedLooks", "TopOffset" };
 
     public void Update(Action<AppSettings> change)
     {

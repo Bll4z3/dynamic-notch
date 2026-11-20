@@ -6,7 +6,7 @@ namespace DynamicNotch.Design;
 /// <summary>
 /// The button roundness token (Settings ▸ Customisation ▸ Shape ▸ Button roundness): 1 = a full pill
 /// (radius = half the height, the original look), 0 = a softly squared button. Buttons register once and
-/// are held weakly, so lists that rebuild their buttons (saved Looks, popovers) never leak.
+/// are held weakly, so lists that rebuild their buttons (popovers) never leak.
 /// </summary>
 public static class ButtonShape
 {

@@ -86,8 +86,7 @@ public partial class App : Application
         var wifi = new WifiService();
         var btDevices = Track(new BluetoothDeviceService());
         var hub = new HubViewModel(settings, quick, audio, brightness, notifications, wifi, btDevices, devices);
-        var sounds = new SoundService(theme, audio);
-        var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus, updates, fonts, theme, sounds);
+        var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus, updates, fonts, theme);
 
         var vm = new MainViewModel(settings,
             new MusicViewModel(media),
@@ -160,7 +159,6 @@ public partial class App : Application
         ApplyPower();
         quick.Changed += ApplyPower;
         theme.Changed += p => { if (p.HasFlag(ThemeService.Part.Performance)) ApplyPower(); };
-        WireSounds(sounds, vm, activity, power, settings);
         _window.ShowNotch();
         // Hide the notch while another app is fullscreen (Settings ▸ General).
         var fullscreen = Track(new FullscreenService(() => _window?.Handle ?? IntPtr.Zero));
@@ -252,7 +250,12 @@ public partial class App : Application
         updates.Start();
         _ = quick.StartAsync();
         if (pages.IsEnabled(PageId.Music)) await media.StartAsync();
-        _tray.SetStartup(await StartupService.IsEnabledAsync());
+        // The real state wins (Task Manager / Windows Settings can change it while the app is closed), so the
+        // switch in Settings ▸ General and the saved value match what Windows will actually do.
+        bool startup = await StartupService.IsEnabledAsync();
+        _tray.SetStartup(startup);
+        if (settings.Current.StartWithWindows != startup) settings.Update(s => s.StartWithWindows = startup);
+        settingsVm.General.RefreshToggles();
         await notifications.StartAsync();
 
         int open = Array.FindIndex(_args, a => a.Equals("--open", StringComparison.OrdinalIgnoreCase));
@@ -429,34 +432,6 @@ public partial class App : Application
             t.Tick += (_, _) => { if (steps.Count > 0) steps[i++ % steps.Count].show(); };
             t.Start();
         }
-    }
-
-    /// <summary>Notch events → sounds (each plays only if sounds are on, the preset isn't Off and the event is enabled).</summary>
-    private void WireSounds(SoundService sounds, MainViewModel vm, ActivityViewModel activity, PowerService power, SettingsService settings)
-    {
-        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(MainViewModel.PageIndex) && _window?.IsExpanded == true) sounds.Play("page"); };
-        if (_window != null)
-            _window.StateChanged += (prev, next) =>
-            {
-                if (next == NotchState.Expanded) sounds.Play("expand");
-                else if (prev == NotchState.Expanded && next == NotchState.Collapsed) sounds.Play("collapse");
-            };
-        vm.PillAccepted += p => sounds.Play(p.Source == PillSource.App ? "notification" : "pill");
-        activity.Updated += (a, sameKind) =>
-        {
-            switch (a.Kind)
-            {
-                case ActivityKind.CapsLock: sounds.Play(a.On ? "capson" : "capsoff"); break;
-                case ActivityKind.Charging when !sameKind: sounds.Play(a.On ? "plug" : "unplug"); break;
-                case ActivityKind.LowBattery when !sameKind: sounds.Play("lowbattery"); break;
-                case ActivityKind.Update when !sameKind && a.Title.StartsWith("Update available"): sounds.Play("update"); break;
-                case ActivityKind.Volume or ActivityKind.Brightness: sounds.Play("tick"); break; // throttled to ≥ 120 ms
-                case ActivityKind.Download when !sameKind && !a.On: sounds.Play("pill"); break;
-            }
-        };
-        vm.Ask.SoundCue += sounds.Play;
-        Views.PillSwitch.UserToggled += on => sounds.Play(on ? "toggleon" : "toggleoff");
-        Views.PopRow.AnyFailed += () => sounds.Play("error");
     }
 
     private DispatcherQueueTimer? _devPerfAll;

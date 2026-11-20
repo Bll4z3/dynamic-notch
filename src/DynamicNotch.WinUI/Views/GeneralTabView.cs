@@ -25,7 +25,7 @@ internal sealed class GeneralTabView : Grid
     {
         var stack = new StackPanel { Margin = new Thickness(0, 0, Theme.S3, Theme.S2) };
         stack.Children.Add(SettingsUi.Title("General"));
-        stack.Children.Add(SettingsUi.Subtitle("How the notch behaves. Looks and sounds are in Customisation."));
+        stack.Children.Add(SettingsUi.Subtitle("How the notch behaves. Colours, shape and motion are in Customisation."));
 
         // ---- Behaviour ----
         stack.Children.Add(new TextBlock { Text = "Behaviour", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
@@ -161,7 +161,7 @@ internal sealed class GeneralTabView : Grid
             var lighten = new Border { Background = Theme.PillLightenBrush, CornerRadius = radius };
             Children.Add(back);
             Children.Add(lighten);
-            var row = new Grid { Margin = Theme.AskInputPadding };
+            var row = new Grid { Margin = Theme.SettingsFieldPadding };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             _label.FontSize = Theme.FontBody + 1;

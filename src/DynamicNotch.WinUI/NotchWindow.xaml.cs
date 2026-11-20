@@ -55,6 +55,16 @@ public sealed partial class NotchWindow : Window
 
     private readonly DispatcherQueueTimer _expandTimer, _collapseTimer, _revealTimer, _regionTimer, _hoverWatch;
 
+    /// <summary>Draws the notch's shadow, click-through, right under this window (see NotchShadowWindow for why).</summary>
+    private Views.NotchShadowWindow? _shadowWindow;
+
+    /// <summary>Back on top of other topmost windows, with the shadow window directly underneath.</summary>
+    private void ReassertTopmost()
+    {
+        Native.ReassertTopmost(_hwnd);
+        _shadowWindow?.KeepBelow(_hwnd);
+    }
+
     public NotchWindow(MainViewModel vm)
     {
         Vm = vm;
@@ -74,6 +84,7 @@ public sealed partial class NotchWindow : Window
         SetUpWindow();
         ApplyThemeLayout();
         BuildComposition();
+        _shadowWindow = new Views.NotchShadowWindow(_shape.Shadow, Anim.VisualOf(Root), Theme.HostWidth, Theme.HostHeight);
         BuildExpanded();
         BuildClipboard();
         BuildAsk();
@@ -133,7 +144,7 @@ public sealed partial class NotchWindow : Window
         _messages.Message += OnMessage;
 
         // Re-assert topmost whenever another window (e.g. a full-screen app) comes to the front.
-        _foregroundHook = (_, _, _, _, _, _, _) => Native.ReassertTopmost(_hwnd);
+        _foregroundHook = (_, _, _, _, _, _, _) => ReassertTopmost();
         _foregroundHookHandle = Native.SetWinEventHook(Native.EVENT_SYSTEM_FOREGROUND, Native.EVENT_SYSTEM_FOREGROUND,
             IntPtr.Zero, _foregroundHook, 0, 0, Native.WINEVENT_OUTOFCONTEXT);
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
@@ -147,7 +158,8 @@ public sealed partial class NotchWindow : Window
         ApplyTargets(immediate: true);
         AppWindow.Show(activateWindow: false);
         Native.MakeSeeThroughPopup(_hwnd); // again: showing re-applies the presenter frame
-        Native.ReassertTopmost(_hwnd);
+        ReassertTopmost();
+        _shadowWindow?.Show(_hwnd);
         UpdateHotkey();
     }
 
@@ -160,6 +172,8 @@ public sealed partial class NotchWindow : Window
         _hotkeyRegistered = false;
         _messages?.Dispose();
         _messages = null;
+        _shadowWindow?.Close();
+        _shadowWindow = null;
         Close();
     }
 
@@ -167,7 +181,7 @@ public sealed partial class NotchWindow : Window
 
     /// <summary>
     /// Top-centre of the chosen monitor (primary, or the one under the pointer), in physical pixels
-    /// (DPI-correct on any monitor setup), pushed down by the top offset and drawn at the notch scale:
+    /// (DPI-correct on any monitor setup), flush with the top edge and drawn at the notch scale:
     /// the window grows by the scale and the content is scaled by a render transform, so every DIP→pixel
     /// conversion (region, hit tests, key capture) goes through <see cref="_scale"/> and stays exact.
     /// </summary>
@@ -180,8 +194,9 @@ public sealed partial class NotchWindow : Window
         int w = (int)Math.Round(Theme.HostWidth * scale);
         int h = (int)Math.Round(Theme.HostHeight * scale);
         _winLeft = bounds.Left + (bounds.Width - w) / 2;
-        _winTop = bounds.Top + (int)Math.Round(TopOffset * monitorScale);
+        _winTop = bounds.Top; // always flush with the top edge of the screen
         Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, _winLeft, _winTop, w, h, Native.SWP_NOACTIVATE);
+        _shadowWindow?.Place(_hwnd, _winLeft, _winTop, w, h, NotchScale);
         UpdateRegion();
     }
 
@@ -331,7 +346,7 @@ public sealed partial class NotchWindow : Window
         if (next == NotchState.Expanded && Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
         if (next == NotchState.Expanded && Vm.CurrentPage == PageId.Hub) _frame.Hub.OnShown();
         // An activity pill that ended under the pointer: carry on as a normal hover (open after the usual delay).
-        if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; Restart(_expandTimer, Motion.HoverExpandDelayMs); }
+        if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; Restart(_expandTimer, HoverDelayMs); }
         if (prev == NotchState.Expanded && next != NotchState.Expanded)
         {
             Unpin();
@@ -499,10 +514,10 @@ public sealed partial class NotchWindow : Window
         double maxH = Math.Max(th, _height.Model.MaxFrom(now));
 
         var rects = new List<Native.RECT>();
-        // Body + shoulders at the largest size still to come, plus room for the shadow once it's bigger than a bar.
+        // Body + shoulders at the largest size still to come. (The shadow is drawn by the click-through shadow
+        // window, so no room is kept for it here: the region is also where this window takes the mouse.)
         double s = Math.Min(Theme.CornerRadius, maxH / 2);
-        double shadow = maxH > Theme.CollapsedHeight + 1 ? Theme.ShadowMargin : 0;
-        rects.Add(Centered(maxW + 2 * s + 2 * shadow, maxH + shadow));
+        rects.Add(Centered(maxW + 2 * s, maxH));
         // Hover strip along the top edge.
         rects.Add(Centered(HitStrip.Width, Theme.HoverStripHeight));
         Native.SetRegion(_hwnd, rects);
@@ -632,7 +647,7 @@ public sealed partial class NotchWindow : Window
             return;
         }
         if (OnActivityPointerEntered()) return; // hovering an activity pill holds it instead of opening the notch
-        if (!_hover) Restart(_expandTimer, Motion.HoverExpandDelayMs);
+        if (!_hover) Restart(_expandTimer, HoverDelayMs);
     }
 
     private void Notch_PointerExited(object sender, PointerRoutedEventArgs e) => OnPointerLeft();
@@ -669,7 +684,7 @@ public sealed partial class NotchWindow : Window
         e.Handled = true;
     }
 
-    private void ScheduleCollapseCheck() => Restart(_collapseTimer, Motion.HoverCollapseDelayMs);
+    private void ScheduleCollapseCheck() => Restart(_collapseTimer, CollapseDelayMs);
 
     private void OnCollapseTimer()
     {

@@ -105,8 +105,6 @@ public sealed class PillSwitch : UserControl
 
     /// <summary>The user flipped the switch (the owner decides whether it sticks; see <see cref="IsOn"/>).</summary>
     public event Action<bool>? Toggled;
-    /// <summary>Any switch in the app was flipped by the user (for the toggle sound).</summary>
-    public static event Action<bool>? UserToggled;
 
     public bool IsOn
     {
@@ -133,7 +131,6 @@ public sealed class PillSwitch : UserControl
     private void Toggle()
     {
         IsOn = !IsOn;
-        UserToggled?.Invoke(IsOn);
         Toggled?.Invoke(IsOn);
     }
 }

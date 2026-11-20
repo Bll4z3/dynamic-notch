@@ -24,11 +24,30 @@ internal static class SettingsUi
         Text = text, Style = StyleOf("SecondaryText"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1,
     };
 
-    public static Border Card(UIElement child, Thickness? padding = null) => new()
+    /// <summary>
+    /// A rounded card. Its padding is even on both sides and grows with the corner radius (live), so text
+    /// and switches always clear the curve; pass <paramref name="padding"/> only for a deliberate exception.
+    /// </summary>
+    public static Border Card(UIElement child, Thickness? padding = null)
     {
-        Background = Theme.CardSurfaceBrush, BorderBrush = Theme.CardEdgeBrush, BorderThickness = new Thickness(1),
-        CornerRadius = Theme.Radius, Padding = padding ?? Theme.PageRowPadding, Child = child,
+        var card = new Border
+        {
+            Background = Theme.CardSurfaceBrush, BorderBrush = Theme.CardEdgeBrush, BorderThickness = new Thickness(1),
+            CornerRadius = Theme.Radius, Child = child,
+        };
+        if (padding is { } p) card.Padding = p;
+        else Insets.Register(card, () => card.Padding = Theme.SettingsCardPadding);
+        return card;
+    }
+
+    /// <summary>The small heading above a card (same in every tab).</summary>
+    public static TextBlock SectionHeader(string text) => new()
+    {
+        Text = text, Style = StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S5, 0, Theme.S2),
     };
+
+    /// <summary>A hairline between rows inside a card (same in every tab).</summary>
+    public static Microsoft.UI.Xaml.Shapes.Rectangle RowDivider() => new() { Height = 1, Fill = Theme.CardBorderBrush, Margin = new Thickness(0, Theme.S1, 0, Theme.S1) };
 
     /// <summary>A label + description with a pill switch on the right, kept in sync with a view-model property.</summary>
     public static FrameworkElement ToggleRow(string title, string description, Func<bool> get, Action<bool> set,
@@ -85,7 +104,7 @@ internal sealed class FocusTabView : Grid
         toggles.Children.Add(SettingsUi.ToggleRow("Play sound at phase end", "A soft chime",
             () => vm.PlaySound, v => vm.PlaySound = v, vm, nameof(FocusTabViewModel.PlaySound)));
         var card = SettingsUi.Card(toggles);
-        card.Margin = Theme.GapTopS3;
+        card.Margin = new Thickness(0, Theme.S3, Theme.S3, 0);
         SetRow(card, 2);
         Children.Add(card);
 
@@ -203,9 +222,9 @@ internal sealed class FocusTabView : Grid
             BorderBrush = Theme.CardEdgeBrush;
             BorderThickness = new Thickness(1);
             CornerRadius = new CornerRadius(RowHeight / 2);
-            Padding = new Thickness(Theme.S3, 0, Theme.S2, 0);
+            Padding = new Thickness(Theme.S3 + 2, 0, Theme.S3 + 2, 0);
             Tag = SettingsWindow.NoDragTag;
-            var hover = new Border { Background = Theme.CardHoverBrush, CornerRadius = new CornerRadius(RowHeight / 2), Margin = new Thickness(-Theme.S3, 0, -Theme.S2, 0) };
+            var hover = new Border { Background = Theme.CardHoverBrush, CornerRadius = new CornerRadius(RowHeight / 2), Margin = new Thickness(-(Theme.S3 + 2), 0, -(Theme.S3 + 2), 0) };
             Children.Add(hover);
             Motions.HoverFade(this, hover);
 
@@ -226,7 +245,7 @@ internal sealed class FocusTabView : Grid
             _chip.BorderThickness = new Thickness(1);
             _chip.MinWidth = 104;
             _chip.VerticalAlignment = VerticalAlignment.Center;
-            var chipRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
+            var chipRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = Theme.ChipPadding, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             _chipDot.Fill = _chipFg;
             chipRow.Children.Add(_chipDot);
             _chipText.Style = SettingsUi.StyleOf("CaptionText");

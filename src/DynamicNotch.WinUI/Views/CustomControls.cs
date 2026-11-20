@@ -21,6 +21,7 @@ namespace DynamicNotch.Views;
 /// thumb that springs in on hover / drag / keyboard focus, a value bubble that follows the thumb while
 /// adjusting, and keyboard control (← → ↑ ↓ step, Page Up / Down ×10, Home / End). Raises
 /// <see cref="Changed"/> continuously while dragging (final = false) and once when the user lets go.
+/// With no label it draws on one line (track · value), for the right-hand side of a Settings row.
 /// </summary>
 internal sealed class ValueSlider : UserControl
 {
@@ -33,40 +34,58 @@ internal sealed class ValueSlider : UserControl
     private double _value;
     private bool _focused;
 
-    public ValueSlider(string label, double min, double max, double step, Func<double, string> format, string? caption = null)
+    public ValueSlider(string? label, double min, double max, double step, Func<double, string> format, string? caption = null)
     {
         _min = min; _max = max; _step = step; _format = format;
         IsTabStop = true;
         AllowFocusOnInteraction = false; // a click must not take focus: the scroller would jump to bring it into view mid-drag
         UseSystemFocusVisuals = true;
         Tag = SettingsWindow.NoDragTag;
-        var root = new Grid { MinHeight = 46 };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var head = new Grid();
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var text = new StackPanel();
-        text.Children.Add(new TextBlock { Text = label, Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold });
-        if (caption != null) text.Children.Add(new TextBlock { Text = caption, Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1 });
-        head.Children.Add(text);
+        bool inline = label == null;
+        var root = new Grid { MinHeight = inline ? 32 : 46 };
         _valueText.Style = SettingsUi.StyleOf("TimeText");
         _valueText.Foreground = Theme.AccentReadableBrush;
-        _valueText.VerticalAlignment = VerticalAlignment.Top;
-        // The value sits in a small pill (tabular digits) so it reads at a glance and never jitters.
-        var chip = new Border { Background = Theme.InputBrush, BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 1, 8, 2), VerticalAlignment = VerticalAlignment.Top, Child = _valueText };
-        Grid.SetColumn(chip, 1);
-        head.Children.Add(chip);
-        root.Children.Add(head);
+        _valueText.HorizontalAlignment = HorizontalAlignment.Center;
+        _valueText.VerticalAlignment = VerticalAlignment.Center;
+        // The value sits in a small pill (tabular digits, centred, even padding) so it reads at a glance and never jitters.
+        var chip = new Border
+        {
+            Background = Theme.InputBrush, BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Padding = Theme.ChipPadding, MinWidth = inline ? 58 : 0, VerticalAlignment = inline ? VerticalAlignment.Center : VerticalAlignment.Top, Child = _valueText,
+        };
+        var trackHost = new Grid { Margin = inline ? new Thickness(0) : new Thickness(0, Theme.S1, 0, 0), VerticalAlignment = inline ? VerticalAlignment.Center : VerticalAlignment.Stretch };
+        if (inline)
+        {
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            chip.Margin = Theme.GapLeftS3;
+            Grid.SetColumn(chip, 1);
+            root.Children.Add(chip);
+        }
+        else
+        {
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var head = new Grid();
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var text = new StackPanel();
+            text.Children.Add(new TextBlock { Text = label, Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold });
+            if (caption != null) text.Children.Add(new TextBlock { Text = caption, Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1 });
+            head.Children.Add(text);
+            Grid.SetColumn(chip, 1);
+            head.Children.Add(chip);
+            root.Children.Add(head);
+            Grid.SetRow(trackHost, 1);
+        }
 
-        var trackHost = new Grid { Margin = new Thickness(0, Theme.S1, 0, 0) };
         _track.FillBrush = Theme.AccentTrackBrush;
         _track.ThumbGlow = true;
         trackHost.Children.Add(_track);
         // Value bubble above the thumb.
         _bubble.Background = Theme.AccentGradientBrush;
         _bubble.CornerRadius = new CornerRadius(9);
-        _bubble.Padding = new Thickness(7, 1, 7, 2);
+        _bubble.Padding = Theme.ChipPadding;
         _bubble.HorizontalAlignment = HorizontalAlignment.Left;
         _bubble.VerticalAlignment = VerticalAlignment.Top;
         _bubble.Margin = new Thickness(0, -20, 0, 0);
@@ -76,7 +95,6 @@ internal sealed class ValueSlider : UserControl
         _bubbleText.Foreground = Theme.OnAccentBrush;
         _bubble.Child = _bubbleText;
         trackHost.Children.Add(_bubble);
-        Grid.SetRow(trackHost, 1);
         root.Children.Add(trackHost);
         Content = root;
 
@@ -352,7 +370,8 @@ internal sealed class SwatchGrid : Grid
     public SwatchGrid()
     {
         Tag = SettingsWindow.NoDragTag;
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Theme.S2 };
+        double outer = Chip + 2 * RingGap + 4;
+        var panel = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = outer + Theme.S1, ItemHeight = outer + Theme.S1 };
         foreach (var p in AccentPresets.All) panel.Children.Add(Make(p.Id, p.Name, new SolidColorBrush(p.Color)));
         var rainbow = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(1, 1) };
         foreach (var (o, c) in new[] { (0.0, 0xFF3B30), (0.25, 0xFFCC00), (0.5, 0x34C759), (0.75, 0x0A84FF), (1.0, 0xBF5AF2) })

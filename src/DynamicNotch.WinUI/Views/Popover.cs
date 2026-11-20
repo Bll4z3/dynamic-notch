@@ -331,12 +331,8 @@ public sealed class PopRow : Grid
     public Brush CaptionBrush { set => _caption.Foreground = value; }
     public bool IsActive { set => _active.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
 
-    /// <summary>A row action failed somewhere (for the error sound).</summary>
-    public static event Action? AnyFailed;
-
     public void Shake()
     {
-        AnyFailed?.Invoke();
         if (!Anim.Enabled) return;
         _shake.Snap(0);
         _shake.Impulse(Motion.ShakeImpulse);
