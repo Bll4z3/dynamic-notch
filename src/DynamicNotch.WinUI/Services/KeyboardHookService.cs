@@ -49,6 +49,13 @@ public sealed class KeyboardHookService : IDisposable
 
     public bool IsInstalled => _kbHook != IntPtr.Zero;
 
+    private long _lastKeyTick = long.MinValue / 2;
+    /// <summary>When any key last went down (Environment.TickCount64; hook thread writes, anyone reads).</summary>
+    public long LastKeyTick => Volatile.Read(ref _lastKeyTick);
+    private long _lastPrintScreenTick = long.MinValue / 2;
+    /// <summary>When Print Screen last went down (the screenshot shelf tells a PrtScn capture from other image copies).</summary>
+    public long LastPrintScreenTick => Volatile.Read(ref _lastPrintScreenTick);
+
     /// <summary>Notch expanded or hovered: ← / → change page.</summary>
     public bool ArrowsActive { get => _arrowsActive; set => _arrowsActive = value; }
     /// <summary>Hovering the music page: Space toggles play/pause.</summary>
@@ -129,6 +136,8 @@ public sealed class KeyboardHookService : IDisposable
             int vk = Marshal.ReadInt32(lParam);           // KBDLLHOOKSTRUCT.vkCode
             bool down = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
             bool up = msg is WM_KEYUP or WM_SYSKEYUP;
+            if (down) Volatile.Write(ref _lastKeyTick, Environment.TickCount64);
+            if (down && vk == 0x2C) Volatile.Write(ref _lastPrintScreenTick, Environment.TickCount64); // VK_SNAPSHOT
 
             // Caps Lock: only noted (never swallowed or delayed); the state is read off this thread.
             if (vk == VK_CAPITAL)

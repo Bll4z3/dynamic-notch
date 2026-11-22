@@ -22,7 +22,8 @@ public sealed partial class NotchWindow
     private readonly SolidColorBrush _compactDot = new(Theme.FocusB);
 
     /// <summary>The collapsed notch shows the timer (instead of the music bits) while a phase is running or paused.</summary>
-    private bool CompactTimerShown => Vm.Pages.IsEnabled(PageId.Focus) && Vm.Focus.IsActive;
+    private bool CompactTimerShown => FocusTimerShown || Vm.QuickTimer.IsActive;
+    private bool FocusTimerShown => Vm.Pages.IsShown(PageId.Focus) && Vm.Focus.IsActive;
 
     private void BuildFocus()
     {
@@ -48,8 +49,9 @@ public sealed partial class NotchWindow
     {
         bool shown = CompactTimerShown;
         _compactTimer.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
-        _compactTimer.Opacity = Vm.Focus.Status == TimerStatus.Paused ? 0.55 : 1;
-        _compactDot.Color = FocusRoutine.Colors(Vm.Focus.Current.Kind).B;
+        // The Focus timer wins the spot; otherwise the palette's quick timer / stopwatch shows (accent dot).
+        _compactTimer.Opacity = FocusTimerShown && Vm.Focus.Status == TimerStatus.Paused ? 0.55 : 1;
+        _compactDot.Color = FocusTimerShown ? FocusRoutine.Colors(Vm.Focus.Current.Kind).B : Theme.AccentColor;
         Vm.Focus.SetTickDemand(
             page: _state == NotchState.Expanded && Vm.CurrentPage == PageId.Focus,
             compact: shown && _state == NotchState.Collapsed && !Vm.MinimalNotch);
@@ -58,13 +60,14 @@ public sealed partial class NotchWindow
 
     private void UpdateCompactText()
     {
-        if (_compactTimer.Visibility == Visibility.Visible) _compactText.Text = FocusRoutine.Digits(Vm.Focus.Remaining);
+        if (_compactTimer.Visibility == Visibility.Visible)
+            _compactText.Text = FocusTimerShown ? FocusRoutine.Digits(Vm.Focus.Remaining) : Vm.QuickTimer.Display;
     }
 
     /// <summary>A clear cue when a phase ends: the page plays its own; elsewhere a pill pops (sound is the timer's).</summary>
     private void OnPhaseEnded(FocusInterval finished, FocusInterval? next)
     {
-        if (!Vm.Pages.IsEnabled(PageId.Focus)) return;
+        if (!Vm.Pages.IsShown(PageId.Focus)) return;
         if (_state == NotchState.Expanded && Vm.CurrentPage == PageId.Focus) return; // the page shows it
         bool waiting = Vm.Focus.Status == TimerStatus.Waiting;
         string title, body;
@@ -85,7 +88,7 @@ public sealed partial class NotchWindow
         }
         Vm.EnqueuePill(new PillRequest(PillSource.System, title, body, Icons.Timer, OnClick: () =>
         {
-            if (Vm.GoTo(PageId.Focus)) Pin();
+            OpenFeature(PageId.Focus);
         }));
     }
 }

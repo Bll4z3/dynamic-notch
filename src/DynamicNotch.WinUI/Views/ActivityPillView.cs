@@ -30,6 +30,7 @@ public sealed class ActivityPillView : Grid
     private readonly Border _capsule = new();
     private readonly Ellipse _glow = new();
     private readonly RadialGradientBrush _glowBrush = new();
+    private Color? _glowColor;
     private readonly VectorIcon _icon = new(), _sunCore = new(), _sunRays = new(), _lockBody = new(), _lockShackle = new();
     private readonly StackPanel _center = new() { VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _title = new(), _subtitle = new(), _value = new(), _upperA = new(), _lowerA = new(), _actionText = new();
@@ -297,6 +298,9 @@ public sealed class ActivityPillView : Grid
         _track.Visibility = slider || a.Kind == ActivityKind.Download && !a.On ? Visibility.Visible : Visibility.Collapsed;
         _track.Interactive = slider && a.OnSet != null;
         _track.Margin = slider ? new Thickness(0) : new Thickness(0, 2, 0, -4);
+        // Volume / brightness show only their level: clear any line left over from the pill shown before
+        // (the low-battery pill's "Plug in soon" used to stay above the volume / brightness track).
+        if (slider) SetSubtitle(null);
 
         // Caps / brightness springs start from the state being shown (no animation from a stale state).
         if (caps)
@@ -323,7 +327,7 @@ public sealed class ActivityPillView : Grid
                 bool muted = a.On || level <= 0.001;
                 _icon.Data = muted ? Icons.VolumeMute : level < 0.34 ? Icons.VolumeLow : level < 0.67 ? Icons.VolumeMid : Icons.VolumeHigh;
                 accent = muted ? Theme.VolumeMutedColor : Theme.VolumeColor;
-                _track.FillBrush = Theme.AccentBrush;
+                _track.FillBrush = Theme.AccentTrackBrush;
                 _track.Dimmed = a.On;
                 _track.Indeterminate = false;
                 _track.SetValue(level, animate);
@@ -335,7 +339,7 @@ public sealed class ActivityPillView : Grid
             {
                 double level = a.Level ?? 0;
                 accent = Theme.BrightnessColor;
-                _track.FillBrush = Theme.AccentBrush;
+                _track.FillBrush = Theme.AccentTrackBrush;
                 _track.Dimmed = false;
                 _track.Indeterminate = false;
                 _track.SetValue(level, animate);
@@ -378,7 +382,7 @@ public sealed class ActivityPillView : Grid
                 _icon.Data = a.Failed ? Icons.Alert : a.On ? Icons.CheckCircle : Icons.Download;
                 _title.Text = a.Title;
                 SetSubtitle(a.On || _compact ? a.Subtitle : null);
-                _track.FillBrush = Theme.AccentBrush;
+                _track.FillBrush = Theme.AccentTrackBrush;
                 _track.Dimmed = false;
                 _track.Indeterminate = !a.On && a.Level == null;
                 if (a.Level is { } f) _track.SetValue(f, animate);
@@ -410,8 +414,16 @@ public sealed class ActivityPillView : Grid
 
     private void SetGlow(Color color, double level, bool pulse)
     {
-        _glowBrush.GradientStops[0].Color = Color.FromArgb(0xD0, color.R, color.G, color.B);
-        _glowBrush.GradientStops[1].Color = Color.FromArgb(0, color.R, color.G, color.B);
+        // A fresh brush per colour: editing a RadialGradientBrush's stops after it has rendered doesn't reach the
+        // compositor, so the glow kept its first colour (the Caps Lock amber) and charging glowed yellow.
+        if (_glowColor != color)
+        {
+            _glowColor = color;
+            var brush = new RadialGradientBrush();
+            brush.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0xD0, color.R, color.G, color.B), Offset = 0 });
+            brush.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0, color.R, color.G, color.B), Offset = 1 });
+            _glow.Fill = brush;
+        }
         _glowLevel.SetTarget(level, Motion.GlowDim);
         var gv = Anim.VisualOf(_glow);
         if (pulse && Anim.Enabled)

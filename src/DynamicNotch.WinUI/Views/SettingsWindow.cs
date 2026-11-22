@@ -3,6 +3,7 @@ using System.Numerics;
 using DynamicNotch.Animation;
 using DynamicNotch.Design;
 using DynamicNotch.Interop;
+using DynamicNotch.Services;
 using DynamicNotch.ViewModels;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Dispatching;
@@ -25,7 +26,9 @@ namespace DynamicNotch.Views;
 /// <summary>
 /// The small Settings window, styled like the notch (same as the WPF one): a black card with the
 /// global radius, a hairline highlight and a soft shadow, on a see-through window. It opens and closes
-/// with a scale + fade spring, closes on Esc or the × button, and drags by its header band only.
+/// with a scale + fade spring, closes on Esc or the × button, and drags by its header band only: that band
+/// is a native caption region (Windows moves the window itself, like any title bar), with every button or
+/// control inside it cut out as a pass-through region so it still takes clicks.
 /// The tab list is data-driven (<see cref="SettingsViewModel.Tabs"/>) with a highlight that springs
 /// between tabs. Only one instance exists (<see cref="ShowSingle"/>). All motion is on the compositor.
 /// </summary>
@@ -37,14 +40,20 @@ internal sealed class SettingsWindow : Window
     private readonly IntPtr _hwnd;
     private readonly RootControl _root = new();
     private readonly Grid _card = new(), _shadowHost = new();
-    private readonly Border _tabHighlight = new();
+    private readonly Border _tabHighlight = new(), _tabBar = new();
+    private readonly List<(SettingsTab Tab, VectorIcon Icon, TextBlock Label)> _tabRows = new();
+    private CompSpring _tabTrail = null!;
+    private const double TabRowGap = 2;
     private readonly Dictionary<object, FrameworkElement> _views = new();
+    private readonly Dictionary<object, Func<FrameworkElement>> _factories = new();
+    private Grid _content = null!;
+    private bool _hidden;
     private readonly CompSpring _open, _tab;
     private readonly DispatcherQueueTimer _closeTimer;
     private bool _closing;
     private SpriteVisual? _caster;
-    private CompositionVisualSurface? _surface;
-    private DropShadow? _shadow;
+    private readonly InputNonClientPointerSource _nonClient;
+    private bool _dragRegionsQueued;
 
     /// <summary>Raised with the window handle when it opens / IntPtr.Zero when it closes (for the keyboard hook).</summary>
     public static event Action<IntPtr>? HandleChanged;
@@ -71,8 +80,10 @@ internal sealed class SettingsWindow : Window
 
         // ---- Card: tab column | divider + content ----
         // The card fills the window (minus the shadow room), so resizing the window resizes it.
-        _card.Background = Theme.NotchBrush;
-        _card.BorderBrush = Theme.HighlightBorderBrush;
+        // Surface: pure black everywhere (sidebar and header included), a faint grey hairline outline, no
+        // gradients or glows. Cards and controls inside sit on it in subtle dark greys.
+        _card.Background = Theme.SettingsSurfaceBrush;
+        _card.BorderBrush = Theme.SettingsBorderBrush;
         _card.BorderThickness = new Thickness(1);
         _card.CornerRadius = Theme.Radius;
         _card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Theme.SettingsTabWidth) });
@@ -81,18 +92,25 @@ internal sealed class SettingsWindow : Window
         var tabs = new Grid { Margin = Theme.SettingsTabPadding };
         tabs.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         tabs.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var heading = new StackPanel { Orientation = Orientation.Horizontal, Margin = Theme.CardHeaderMargin };
-        heading.Children.Add(new VectorIcon { Data = Icons.Settings, Size = Theme.IconSmall, Foreground = Theme.SecondaryText, VerticalAlignment = VerticalAlignment.Center });
-        heading.Children.Add(new TextBlock { Text = "Settings", Style = AskPage.TextStyle("SectionText"), Margin = Theme.GapLeftS2 });
-        tabs.Children.Add(heading);
+        tabs.Children.Add(BrandHeader());
         var list = new Grid();
         Grid.SetRow(list, 1);
+        // The selected tab: a quiet grey pill, with a plain white line beside it; both slide to the new tab.
         _tabHighlight.Height = Theme.SettingsTabHeight;
         _tabHighlight.VerticalAlignment = VerticalAlignment.Top;
         _tabHighlight.CornerRadius = Theme.RadiusSmall;
-        _tabHighlight.Background = Theme.AccentSubtleBrush; // the selected tab carries the accent
+        _tabHighlight.Background = Theme.SettingsTabFillBrush;
         list.Children.Add(_tabHighlight);
-        var rows = new StackPanel();
+        _tabBar.Width = Theme.SettingsTabBarWidth;
+        _tabBar.Height = Theme.SettingsTabBarHeight;
+        _tabBar.CornerRadius = new CornerRadius(Theme.SettingsTabBarWidth / 2);
+        _tabBar.HorizontalAlignment = HorizontalAlignment.Left;
+        _tabBar.VerticalAlignment = VerticalAlignment.Top;
+        _tabBar.Margin = new Thickness(-(Theme.S2 - 1), (Theme.SettingsTabHeight - Theme.SettingsTabBarHeight) / 2, 0, 0);
+        _tabBar.Background = Theme.SettingsIndicatorBrush;
+        _tabBar.IsHitTestVisible = false;
+        list.Children.Add(_tabBar);
+        var rows = new StackPanel { Spacing = 2 };
         foreach (var tab in vm.Tabs) rows.Children.Add(TabRow(tab));
         list.Children.Add(rows);
         tabs.Children.Add(list);
@@ -101,14 +119,17 @@ internal sealed class SettingsWindow : Window
         var contentHost = new Border { BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1, 0, 0, 0) };
         Grid.SetColumn(contentHost, 1);
         var content = new Grid { Margin = Theme.SettingsPadding };
-        _views[vm.ApiKey] = new ApiKeyTabView(vm.ApiKey);
-        _views[vm.Pages] = new PagesTabView(vm.Pages);
-        _views[vm.Focus] = new FocusTabView(vm.Focus);
-        _views[vm.General] = new GeneralTabView(vm.General);
-        _views[vm.Customisation] = new CustomisationTabView(vm.Customisation);
-        _views[vm.Pills] = new PillsTabView(vm.Pills);
-        _views[vm.Updates] = new UpdatesTabView(vm.Updates);
-        foreach (var v in _views.Values) content.Children.Add(v);
+        // Tab views are built the first time each tab is shown (the Customisation tab alone is a big tree),
+        // so opening Settings only builds the visible tab.
+        _content = content;
+        _factories[vm.ApiKey] = () => new ApiKeyTabView(vm.ApiKey);
+        _factories[vm.Layout] = () => new LayoutTabView(vm.Layout);
+        _factories[vm.Focus] = () => new FocusTabView(vm.Focus);
+        _factories[vm.General] = () => new GeneralTabView(vm.General);
+        _factories[vm.Customisation] = () => new CustomisationTabView(vm.Customisation);
+        _factories[vm.Pills] = () => new PillsTabView(vm.Pills);
+        _factories[vm.Updates] = () => new UpdatesTabView(vm.Updates);
+        _factories[vm.PaletteTab] = () => new PaletteTabView(vm.PaletteTab);
         var close = new IconButton(26, Theme.IconSmall) { Icon = Icons.Close, Foreground = Theme.SecondaryText, Tooltip = "Close (Esc)", HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
         close.Click += AnimateClose;
         content.Children.Add(close);
@@ -149,48 +170,58 @@ internal sealed class SettingsWindow : Window
         Content = _root;
 
         // ---- Motion: open / close (scale + fade), the tab highlight ----
-        var cv = Anim.VisualOf(_card);
+        var cv = Anim.VisualOf(_card, translation: true);
         var c = cv.Compositor;
         var props = c.CreatePropertySet();
         _open = new CompSpring(props, "o", Motion.WindowOpen, 0);
         _tab = new CompSpring(props, "tab", Motion.TabHighlight, 0, precision: 50);
+        // The bar's trailing end: a slower spring, so the bar stretches toward the new tab and then catches up.
+        _tabTrail = new CompSpring(props, "trail", Motion.TabTrail, 0, precision: 50);
         cv.CenterPoint = new Vector3((float)Theme.SettingsWidth / 2, (float)Theme.SettingsHeight / 2, 0);
-        var shv = ElementCompositionPreview.GetElementVisual(_shadowHost);
+        var shv = Anim.VisualOf(_shadowHost, translation: true);
         _card.SizeChanged += (_, e) =>
         {
             var centre = new Vector3((float)e.NewSize.Width / 2, (float)e.NewSize.Height / 2, 0);
             cv.CenterPoint = shv.CenterPoint = centre;
-            if (_caster != null) _caster.Size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
-            if (_surface != null) _surface.SourceSize = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
+            if (_caster != null) SoftShadow.Layout(_caster, new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height));
         };
         string s = $"({Anim.F(Motion.WindowStartScale)} + (1 - {Anim.F(Motion.WindowStartScale)}) * p.o)";
-        foreach (var v in new[] { cv, ElementCompositionPreview.GetElementVisual(_shadowHost) })
+        foreach (var v in new[] { cv, shv })
         {
             v.CenterPoint = cv.CenterPoint;
             v.StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.o, 0, 1)", ("p", props)));
             v.StartAnimation("Scale", Anim.Expr(c, $"Vector3({s}, {s}, 1)", ("p", props)));
+            // ...and rises a few DIPs into place while it opens (sinks back as it closes).
+            var rise = Anim.Expr(c, "Vector3(0, (1 - Clamp(p.o, 0, 1.2)) * R, 0)", ("p", props));
+            rise.SetScalarParameter("R", (float)Motion.WindowRise);
+            v.StartAnimation("Translation", rise);
         }
         Anim.VisualOf(_tabHighlight, translation: true).StartAnimation("Translation", Anim.Expr(c, "Vector3(0, p.tab, 0)", ("p", props)));
+        // The white line glides to the new tab with the pill; it stretches a touch while it travels (the
+        // trailing spring lags slightly) and settles back to its resting height.
+        var bv = Anim.VisualOf(_tabBar, translation: true);
+        bv.CenterPoint = Vector3.Zero;
+        bv.StartAnimation("Translation", Anim.Expr(c, "Vector3(0, Min(p.tab, p.trail), 0)", ("p", props)));
+        var stretch = Anim.Expr(c, "Vector3(1, (Abs(p.tab - p.trail) + B) / B, 1)", ("p", props));
+        stretch.SetScalarParameter("B", (float)Theme.SettingsTabBarHeight);
+        bv.StartAnimation("Scale", stretch);
         BuildShadow(c);
 
         _closeTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
         _closeTimer.IsRepeating = false;
-        _closeTimer.Tick += (_, _) => { _closeTimer.Stop(); Close(); };
+        _closeTimer.Tick += (_, _) => { _closeTimer.Stop(); HideWindow(); };
 
         vm.PropertyChanged += OnVmChanged;
         ShowTab(animate: false);
 
-        // Drag only from the header band at the top of the card, and never from a control inside it.
-        // (Every container here is a Grid or Border, so testing the source's type alone made the whole
-        // window draggable, including presses on buttons, switches and empty content.)
-        _card.PointerPressed += (_, e) =>
-        {
-            var pt = e.GetCurrentPoint(_card);
-            if (!pt.Properties.IsLeftButtonPressed || pt.Position.Y > Theme.SettingsDragBandHeight) return;
-            if (IsInteractive(e.OriginalSource as DependencyObject)) return;
-            Native.BeginWindowDrag(_hwnd);
-            e.Handled = true;
-        };
+        // Dragging: the header band at the top of the card is a native caption region, so Windows moves the
+        // window itself (smooth, like any title bar). It used to start a system move loop from inside the XAML
+        // pointer handler (WM_NCLBUTTONDOWN sent from PointerPressed), which blocked the UI thread's input
+        // processing for the whole drag and made the window trail behind the pointer. Buttons and other
+        // controls inside the band are pass-through regions, so they keep working.
+        _nonClient = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
+        _root.LayoutUpdated += (_, _) => QueueDragRegions();
+        _root.Loaded += (_, _) => QueueDragRegions();
         _root.KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { AnimateClose(); e.Handled = true; } };
         Closed += (_, _) =>
         {
@@ -202,27 +233,68 @@ internal sealed class SettingsWindow : Window
         };
     }
 
-    private void OnRadiusChanged() { }
+    private void OnRadiusChanged() => BuildShadow(Anim.VisualOf(_card).Compositor); // the shadow's corners follow the radius
 
     private void OnThemeChanged(Services.ThemeService.Part parts)
     {
-        if (parts.HasFlag(Services.ThemeService.Part.Surface) && _shadow != null)
-            _shadow.Opacity = (float)Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity);
+        if (parts.HasFlag(Services.ThemeService.Part.Surface) && _caster != null)
+            _caster.Opacity = (float)Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity);
     }
 
     /// <summary>Marks an element (a tab row, a list row…) that must never start a window drag.</summary>
     internal const string NoDragTag = "settings:nodrag";
 
-    /// <summary>True when the element, or any parent up to the card, is something the user clicks to act.</summary>
-    private bool IsInteractive(DependencyObject? d)
+    /// <summary>Something the user clicks to act: it must never become part of the drag region.</summary>
+    private static bool IsInteractive(DependencyObject d) =>
+        d is IconButton or PillButton or TextButton or Control || d is FrameworkElement { Tag: NoDragTag };
+
+    /// <summary>Recomputes the drag regions once, after the current burst of layout passes.</summary>
+    private void QueueDragRegions()
     {
-        for (; d != null && !ReferenceEquals(d, _card); d = VisualTreeHelper.GetParent(d))
-        {
-            if (d is IconButton or PillButton or TextButton or Control or Microsoft.UI.Xaml.Documents.Hyperlink) return true;
-            if (d is FrameworkElement { Tag: NoDragTag }) return true;
-        }
-        return false;
+        if (_dragRegionsQueued || _hidden) return;
+        _dragRegionsQueued = true;
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => { _dragRegionsQueued = false; UpdateDragRegions(); });
     }
+
+    /// <summary>
+    /// Caption = the header band across the top of the card; pass-through = every interactive element that
+    /// overlaps it (the close button, the preview's mode switch…), in physical pixels of the client area.
+    /// Only the part of the tree that overlaps the band is visited.
+    /// </summary>
+    private void UpdateDragRegions()
+    {
+        if (_card.XamlRoot == null || _card.ActualWidth <= 0) return;
+        double scale = _card.XamlRoot.RasterizationScale;
+        var origin = _card.TransformToVisual(_root).TransformPoint(new Windows.Foundation.Point(0, 0));
+        var band = new Windows.Foundation.Rect(origin.X, origin.Y, _card.ActualWidth, Math.Min(Theme.SettingsDragBandHeight, _card.ActualHeight));
+        var pass = new List<RectInt32>();
+        CollectInteractive(_card, band, scale, pass);
+        try
+        {
+            _nonClient.SetRegionRects(NonClientRegionKind.Caption, new[] { ToPixels(band, scale) });
+            _nonClient.SetRegionRects(NonClientRegionKind.Passthrough, pass.ToArray());
+        }
+        catch { /* the window is closing */ }
+    }
+
+    private void CollectInteractive(DependencyObject parent, Windows.Foundation.Rect band, double scale, List<RectInt32> pass)
+    {
+        int n = VisualTreeHelper.GetChildrenCount(parent);
+        for (int i = 0; i < n; i++)
+        {
+            if (VisualTreeHelper.GetChild(parent, i) is not FrameworkElement el) continue;
+            if (el.Visibility != Visibility.Visible || !el.IsHitTestVisible || el.ActualWidth <= 0 || el.ActualHeight <= 0) continue;
+            var p = el.TransformToVisual(_root).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var r = new Windows.Foundation.Rect(p.X, p.Y, el.ActualWidth, el.ActualHeight);
+            var hit = r; hit.Intersect(band);
+            if (hit.IsEmpty || hit.Width <= 0 || hit.Height <= 0) continue; // nothing under the band: skip the whole subtree
+            if (IsInteractive(el)) pass.Add(ToPixels(hit, scale));
+            else CollectInteractive(el, band, scale, pass);
+        }
+    }
+
+    private static RectInt32 ToPixels(Windows.Foundation.Rect r, double scale) =>
+        new((int)Math.Floor(r.X * scale), (int)Math.Floor(r.Y * scale), (int)Math.Ceiling(r.Width * scale), (int)Math.Ceiling(r.Height * scale));
 
     /// <summary>Opens the window, or brings the existing one to the front.</summary>
     /// <summary>A new UI font: refresh the open window's text with a short cross-fade.</summary>
@@ -242,13 +314,29 @@ internal sealed class SettingsWindow : Window
 
     public static void ShowSingle(SettingsViewModel vm)
     {
-        if (_instance != null)
+        PerfLog.Begin("Settings open");
+        if (_instance is { } existing)
         {
-            _instance.Activate();
-            Native.SetForegroundWindow(_instance._hwnd);
+            // Reopening reuses the hidden window: nothing is rebuilt, only the open spring plays.
+            existing.ShowTab(animate: false);
+            if (existing._hidden)
+            {
+                existing._hidden = false;
+                existing.QueueDragRegions();
+                existing._closing = false;
+                existing.AppWindow.Show();
+                Native.MakeSeeThroughPopup(existing._hwnd);
+                HandleChanged?.Invoke(existing._hwnd);
+                existing._open.Snap(0);
+                existing._open.SetTarget(1, Motion.WindowOpen);
+                existing.FocusFirst();
+            }
+            existing.Activate();
+            Native.SetForegroundWindow(existing._hwnd);
+            PerfLog.Mark("shown (reused window)");
             return;
         }
-        var w = _instance = new SettingsWindow(vm);
+        var w = _instance = PerfLog.Time("new SettingsWindow", () => new SettingsWindow(vm));
         // Centred on the primary monitor, in physical pixels.
         var (bounds, scale) = Native.GetPrimaryMonitor();
         int width = (int)Math.Round((Theme.SettingsWidth + 2 * Theme.SettingsShadowRoom) * scale);
@@ -268,15 +356,23 @@ internal sealed class SettingsWindow : Window
     private void FocusFirst() =>
         DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
         {
-            if (_views[_vm.SelectedTab.Content] is ApiKeyTabView key) key.FocusBox();
+            if (_views.GetValueOrDefault(_vm.SelectedTab.Content) is ApiKeyTabView key) key.FocusBox();
             else _root.Focus(FocusState.Programmatic);
         });
+
+    /// <summary>Closing hides the window (kept for an instant reopen; its views and subscriptions stay single).</summary>
+    private void HideWindow()
+    {
+        _hidden = true;
+        AppWindow.Hide();
+        HandleChanged?.Invoke(IntPtr.Zero);
+    }
 
     private void AnimateClose()
     {
         if (_closing) return;
         _closing = true;
-        if (!Anim.Enabled) { Close(); return; }
+        if (!Anim.Enabled) { HideWindow(); return; }
         _open.SetTarget(0, Motion.FadeOut);
         _closeTimer.Interval = TimeSpan.FromSeconds(Math.Max(0.05, _open.Model.RemainingDuration));
         _closeTimer.Start();
@@ -287,41 +383,132 @@ internal sealed class SettingsWindow : Window
         if (e.PropertyName == nameof(SettingsViewModel.SelectedIndex)) ShowTab(animate: true);
     }
 
+    private object? _shownTab;
+
     private void ShowTab(bool animate)
     {
-        double y = _vm.SelectedIndex * Theme.SettingsTabHeight;
-        if (animate) _tab.SetTarget(y, Motion.TabHighlight); else _tab.Snap(y);
-        foreach (var (key, view) in _views) view.Visibility = ReferenceEquals(key, _vm.SelectedTab.Content) ? Visibility.Visible : Visibility.Collapsed;
+        double y = _vm.SelectedIndex * (Theme.SettingsTabHeight + TabRowGap);
+        if (animate) { _tab.SetTarget(y, Motion.TabHighlight); _tabTrail.SetTarget(y, Motion.TabTrail); }
+        else { _tab.Snap(y); _tabTrail.Snap(y); }
+        foreach (var (tab, icon, label) in _tabRows)
+        {
+            bool on = ReferenceEquals(tab, _vm.SelectedTab);
+            icon.Foreground = on ? Theme.PrimaryText : Theme.SecondaryText;
+            label.Foreground = on ? Theme.PrimaryText : Theme.SecondaryText;
+            label.FontFamily = on ? Theme.FontSemiBold : Theme.FontMedium;
+            label.FontWeight = on ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Medium;
+        }
+        var selected = _vm.SelectedTab.Content;
+        if (!_views.ContainsKey(selected) && _factories.TryGetValue(selected, out var make))
+        {
+            var view = PerfLog.Time($"build {selected.GetType().Name.Replace("ViewModel", "")}", make);
+            _views[selected] = view;
+            _content.Children.Insert(0, view); // under the close button
+        }
+        foreach (var (key, view) in _views) view.Visibility = ReferenceEquals(key, selected) ? Visibility.Visible : Visibility.Collapsed;
+        bool changed = !ReferenceEquals(_shownTab, selected);
+        _shownTab = selected;
+        if ((changed || !animate) && _views.TryGetValue(selected, out var shown)) PlayEntrance(shown);
+    }
+
+    /// <summary>
+    /// The section's blocks fade and rise in with a short stagger (the Customisation tab runs its own card
+    /// stagger). One-shot compositor keyframes: nothing runs once they land. Rows that own their translation
+    /// (the Pages tab's drag-to-reorder list) are left alone, only top-level blocks move there.
+    /// </summary>
+    private static void PlayEntrance(FrameworkElement view)
+    {
+        if (!Anim.Enabled || view is CustomisationTabView) return;
+        var blocks = new List<UIElement>();
+        if (view is Panel panel)
+            foreach (var child in panel.Children)
+            {
+                if (child.Visibility != Visibility.Visible) continue;
+                if (view is not LayoutTabView && child is ScrollViewer { Content: Panel inner })
+                    blocks.AddRange(inner.Children.Where(x => x.Visibility == Visibility.Visible));
+                else blocks.Add(child);
+            }
+        if (blocks.Count == 0) return;
+        var c = Anim.VisualOf(view).Compositor;
+        var ease = c.CreateCubicBezierEasingFunction(new Vector2(0.2f, 0.85f), new Vector2(0.25f, 1f)); // ease-out
+        var duration = TimeSpan.FromMilliseconds(Theme.SettingsEntranceMs / Motion.Speed);
+        for (int i = 0; i < blocks.Count; i++)
+        {
+            var v = Anim.VisualOf(blocks[i], translation: true);
+            var delay = TimeSpan.FromMilliseconds(Math.Min(i, Theme.SettingsEntranceMax) * Theme.SettingsEntranceStepMs * Motion.StaggerScale);
+            var o = c.CreateScalarKeyFrameAnimation();
+            o.InsertKeyFrame(0, 0);
+            o.InsertKeyFrame(1, 1, ease);
+            o.Duration = duration;
+            o.DelayTime = delay;
+            o.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+            var t = c.CreateVector3KeyFrameAnimation();
+            t.InsertKeyFrame(0, new Vector3(0, (float)Theme.SettingsEntranceRise, 0));
+            t.InsertKeyFrame(1, Vector3.Zero, ease);
+            t.Duration = duration;
+            t.DelayTime = delay;
+            t.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+            v.StartAnimation("Opacity", o);
+            v.StartAnimation("Translation", t);
+        }
+    }
+
+    /// <summary>
+    /// Minimal header: a small mark (a dark rounded tile holding a white notch silhouette), the app name and
+    /// "Settings" in soft grey. No colour and no glow, so it sits quietly on the black.
+    /// </summary>
+    private static FrameworkElement BrandHeader()
+    {
+        var g = new Grid { Margin = new Thickness(Theme.S2, Theme.S1, 0, Theme.S5) };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var mark = new Border
+        {
+            Width = 26, Height = 26, CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center,
+            Background = Theme.SettingsTabFillBrush, BorderBrush = Theme.SettingsBorderBrush, BorderThickness = new Thickness(1),
+            Child = new Border { Width = 12, Height = 5, CornerRadius = new CornerRadius(2.5), Background = Theme.SettingsIndicatorBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 6, 0, 0) },
+        };
+        g.Children.Add(mark);
+        var text = new StackPanel { Margin = new Thickness(Theme.S3 - 2, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Spacing = 0 };
+        text.Children.Add(new TextBlock { Text = "Dynamic Notch", Style = AskPage.TextStyle("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = Theme.FontBody });
+        text.Children.Add(new TextBlock { Text = "Settings", Style = AskPage.TextStyle("CaptionText"), Foreground = Theme.TertiaryText });
+        Grid.SetColumn(text, 1);
+        g.Children.Add(text);
+        return g;
     }
 
     private FrameworkElement TabRow(SettingsTab tab)
     {
         var row = new Grid { Height = Theme.SettingsTabHeight, Background = Theme.TransparentBrush, Tag = NoDragTag };
-        var line = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = Theme.GapLeftS3 };
-        line.Children.Add(new VectorIcon { Data = tab.Icon, Size = Theme.IconSmall, Foreground = Theme.PrimaryText, VerticalAlignment = VerticalAlignment.Center });
-        line.Children.Add(new TextBlock { Text = tab.Title, Style = AskPage.TextStyle("BaseText"), Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center });
+        var hover = new Border { Background = Theme.CardHoverBrush, CornerRadius = Theme.RadiusSmall, IsHitTestVisible = false };
+        row.Children.Add(hover);
+        Motions.HoverFade(row, hover, () => !ReferenceEquals(tab, _vm.SelectedTab));
+        var line = new Grid { VerticalAlignment = VerticalAlignment.Center };
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Insets.Register(line, () => { double inset = Theme.InsetFor(Theme.CornerRadiusSmall); line.Margin = new Thickness(inset, 0, inset, 0); });
+        var icon = new VectorIcon { Data = tab.Icon, Size = Theme.IconSmall, Foreground = Theme.SecondaryText, VerticalAlignment = VerticalAlignment.Center };
+        var label = new TextBlock { Text = tab.Title, Style = AskPage.TextStyle("BaseText"), Margin = Theme.GapLeftS3, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        Grid.SetColumn(label, 1);
+        line.Children.Add(icon);
+        line.Children.Add(label);
         row.Children.Add(line);
+        _tabRows.Add((tab, icon, label));
         Motions.PressScale(row);
         row.Tapped += (_, _) => _vm.SelectedTab = tab;
         return row;
     }
 
     /// <summary>Soft shadow under the card: a drop shadow masked by a live surface of the card.</summary>
+    /// <summary>
+    /// Pre-rendered soft shadow under the card (SoftShadow). The old drop shadow was masked by a live surface
+    /// of the whole card, re-rendered on every hover fade, slider drag or preview animation inside it.
+    /// </summary>
     private void BuildShadow(Compositor c)
     {
-        var size = new Vector2((float)Theme.SettingsWidth, (float)Theme.SettingsHeight);
-        var surface = _surface = c.CreateVisualSurface();
-        surface.SourceVisual = ElementCompositionPreview.GetElementVisual(_card);
-        surface.SourceSize = size;
-        var shadow = _shadow = c.CreateDropShadow();
-        shadow.BlurRadius = (float)Theme.SettingsShadowBlur;
-        shadow.Offset = new Vector3(0, (float)Theme.SettingsShadowOffsetY, 0);
-        shadow.Opacity = (float)Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity);
-        shadow.Color = Color.FromArgb(255, 0, 0, 0);
-        shadow.Mask = c.CreateSurfaceBrush(surface);
-        var caster = _caster = c.CreateSpriteVisual();
-        caster.Size = size;
-        caster.Shadow = shadow;
+        var caster = _caster = SoftShadow.Create(c, Theme.CornerRadius, Theme.SettingsShadowBlur,
+            Math.Min(1, Theme.SettingsShadowOpacity * Theme.ShadowIntensity), Theme.SettingsShadowOffsetY);
+        SoftShadow.Layout(caster, new Vector2((float)Math.Max(1, _card.ActualWidth), (float)Math.Max(1, _card.ActualHeight)));
         ElementCompositionPreview.SetElementChildVisual(_shadowHost, caster);
     }
 
@@ -336,7 +523,7 @@ internal sealed class ApiKeyTabView : StackPanel
     private readonly PasswordBox _box = new();
     private readonly IconButton _eye;
     private readonly PillButton _remove;
-    private readonly VectorIcon _check = new() { Data = Icons.Check, Size = Theme.IconSmall, Foreground = Theme.SuccessBrush, Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center };
+    private readonly VectorIcon _check = new() { Data = Icons.Check, Size = Theme.IconSmall, Foreground = Theme.SuccessBrush, Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
     private readonly TextBlock _status = new(), _test = new();
     private readonly CompSpring _checkSpring;
 
@@ -362,7 +549,7 @@ internal sealed class ApiKeyTabView : StackPanel
         _box.FontFamily = Theme.MonoFont;
         _box.FontSize = Theme.FontBody;
         _box.Height = Theme.SettingsFieldHeight;
-        _box.Padding = Theme.AskInputPadding;
+        _box.Padding = Theme.SettingsFieldPadding;
         _box.VerticalContentAlignment = VerticalAlignment.Center;
         _box.SelectionHighlightColor = Theme.AccentBrush;
         InputStyle.Apply(_box);
@@ -454,6 +641,7 @@ internal sealed class ApiKeyTabView : StackPanel
     {
         if (!_vm.Save(_box.Password.Trim())) return;
         _box.Password = ""; // never show the full key after saving
+        _check.Visibility = Visibility.Visible;
         _checkSpring.Snap(0);
         _checkSpring.SetTarget(1, Motion.Pop);
     }

@@ -38,7 +38,7 @@ public sealed class Visualizer : StackPanel
                 Width = BarWidth,
                 Height = BarHeight,
                 CornerRadius = new CornerRadius(Math.Min(Theme.CornerRadius, BarWidth / 2)),
-                Background = Theme.PrimaryText,
+                Background = Theme.AccentBarBrush,
                 VerticalAlignment = VerticalAlignment.Center,
             };
             Children.Add(_bars[i]);
@@ -59,6 +59,15 @@ public sealed class Visualizer : StackPanel
     /// <summary>How often the bars change (fps). 30 by default; Low power mode lowers it.</summary>
     public static double FrameRate { get; set; } =
         double.TryParse(Environment.GetEnvironmentVariable("NOTCH_VIS_FPS"), out var dev) ? dev : Motion.VisualizerFps; // env: dev A/B only
+
+    /// <summary>
+    /// Accent-tinted bars (default; they follow the accent, or the album colour while music plays in album
+    /// mode, through the shared brush) or plain white. Only the fill changes: the animation is untouched.
+    /// </summary>
+    public bool Colorful
+    {
+        set { foreach (var b in _bars) b.Background = value ? Theme.AccentBarBrush : Theme.PrimaryText; }
+    }
 
     /// <summary>Re-applies <see cref="FrameRate"/> (or a style change) to a running loop.</summary>
     public void Restart()

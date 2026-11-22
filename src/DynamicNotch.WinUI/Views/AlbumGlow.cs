@@ -31,6 +31,8 @@ public sealed class AlbumGlow
     public AlbumGlow(UIElement host, CompositionPropertySet notch)
     {
         _c = ElementCompositionPreview.GetElementVisual(host).Compositor;
+        // The overlays' springs (Ask, the command palette) may not exist yet: the glow reads them below.
+        foreach (var key in new[] { "AskOv", "PalOv" }) if (notch.TryGetScalar(key, out _) != CompositionGetValueStatus.Succeeded) notch.InsertScalar(key, 0);
         _g = _c.CreatePropertySet();
         _g.InsertScalar("Music", 0);
         _g.InsertScalar("FrontA", 1);
@@ -59,7 +61,9 @@ public sealed class AlbumGlow
         string musicVisible = "(G.Music >= 0 ? 1 - Clamp(Abs(N.Page - G.Music), 0, 1) : 0)";
         string opened = Anim.SmoothStep(0.3, 1, p);
         string pulse = $"(1 - G.Pulsing * {Anim.F(Theme.GlowPulseOpacity)} * (1 - G.Phase))";
-        root.StartAnimation("Opacity", Expr($"Clamp(G.Level, 0, 1) * {musicVisible} * {opened} * {pulse}"));
+        // ...and it fades out while Ask or the command palette is over the page (they have their own clean background).
+        string uncovered = "(1 - Clamp(Max(N.AskOv, N.PalOv), 0, 1))";
+        root.StartAnimation("Opacity", Expr($"Clamp(G.Level, 0, 1) * {musicVisible} * {opened} * {pulse} * {uncovered}"));
         string scale = $"(1 + G.Pulsing * {Anim.F(Theme.GlowPulseScale)} * G.Phase)";
         _group.StartAnimation("Scale", Expr($"Vector3({scale}, {scale}, 1)"));
 

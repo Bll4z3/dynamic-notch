@@ -33,7 +33,6 @@ public sealed class Popover : Grid
     private readonly TextBlock _title = new(), _caption = new();
     private readonly CompSpring _open;
     private SpriteVisual? _caster;
-    private CompositionVisualSurface? _surface;
 
     public Popover(string icon, string title)
     {
@@ -105,12 +104,14 @@ public sealed class Popover : Grid
         cv.StartAnimation("Scale", Anim.Expr(c, $"Vector3({s}, {s}, 1)", ("p", set)));
         cv.StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.v * 1.8, 0, 1)", ("p", set)));
         Anim.VisualOf(_dim).StartAnimation("Opacity", Anim.Expr(c, $"Clamp(p.v, 0, 1) * {Anim.F(Theme.PopoverDimOpacity)}", ("p", set)));
-        BuildShadow(c, set);
+        // The shadow (a Win2D-rendered surface) is built off the start-up path: a moment after load, or on first open.
+        _shadowSet = set;
+        Loaded += (_, _) => DispatcherQueue.GetForCurrentThread().CreateTimer().Also(t => { t.IsRepeating = false; t.Interval = TimeSpan.FromSeconds(2.5); t.Tick += (_, _) => { t.Stop(); EnsureShadow(); }; t.Start(); });
         _card.SizeChanged += (_, e) =>
         {
             var size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
-            if (_caster != null) _caster.Size = size;
-            if (_surface != null) _surface.SourceSize = size;
+            if (_caster != null) SoftShadow.Layout(_caster, size);
+            _shadowHost.Width = e.NewSize.Width;
         };
         KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape && IsOpen) { Close(); e.Handled = true; } };
     }
@@ -132,6 +133,7 @@ public sealed class Popover : Grid
         IsOpen = true;
         Services.PerfLog.Mark("Open() entered");
         IsHitTestVisible = true;
+        EnsureShadow();
         var cv = Anim.VisualOf(_card);
         // Only re-aim the origin when the popup is (nearly) closed, so re-opening mid-close doesn't jump.
         if (from != null && _open.Value < 0.05)
@@ -175,18 +177,24 @@ public sealed class Popover : Grid
         return false;
     }
 
+    private CompositionPropertySet _shadowSet = null!;
+
+    private void EnsureShadow()
+    {
+        if (_caster != null) return;
+        BuildShadow(Anim.VisualOf(_card).Compositor, _shadowSet);
+        if (_card.ActualWidth > 0) { SoftShadow.Layout(_caster!, new Vector2((float)_card.ActualWidth, (float)_card.ActualHeight)); _shadowHost.Width = _card.ActualWidth; }
+    }
+
     private void BuildShadow(Compositor c, CompositionPropertySet set)
     {
-        _surface = c.CreateVisualSurface();
-        _surface.SourceVisual = ElementCompositionPreview.GetElementVisual(_card);
-        var shadow = c.CreateDropShadow();
-        shadow.BlurRadius = (float)Theme.PopoverShadowBlur;
-        shadow.Offset = new Vector3(0, (float)Theme.PopoverShadowOffsetY, 0);
-        shadow.Color = Color.FromArgb(255, 0, 0, 0);
-        shadow.Mask = c.CreateSurfaceBrush(_surface);
-        shadow.StartAnimation("Opacity", Anim.Expr(c, $"Clamp(p.v, 0, 1) * {Anim.F(Theme.PopoverShadowOpacity)}", ("p", set)));
-        _caster = c.CreateSpriteVisual();
-        _caster.Shadow = shadow;
+        // Pre-rendered soft shadow (SoftShadow): the old drop shadow was masked by a live surface of the
+        // card, re-rendered whenever anything in it changed (spinner frames, rows, hovers). Its host is
+        // aligned with the card (it used to stretch across the page, casting from the wrong place).
+        _shadowHost.HorizontalAlignment = HorizontalAlignment.Right;
+        _shadowHost.IsHitTestVisible = false;
+        _caster = SoftShadow.Create(c, Theme.CornerRadiusSmall, Theme.PopoverShadowBlur, 1, Theme.PopoverShadowOffsetY);
+        _caster.StartAnimation("Opacity", Anim.Expr(c, $"Clamp(p.v, 0, 1) * {Anim.F(Theme.PopoverShadowOpacity)}", ("p", set)));
         ElementCompositionPreview.SetElementChildVisual(_shadowHost, _caster);
         // The shadow follows the card's open motion.
         var sv = ElementCompositionPreview.GetElementVisual(_shadowHost);
@@ -263,7 +271,9 @@ public sealed class PopRow : Grid
         _fill.CornerRadius = Theme.RadiusSmall;
         SetRowSpan(_fill, 2);
         Children.Add(_fill);
-        Motions.HoverFade(this, _fill);
+        // The hover spring is created the first time the pointer enters (rows are built in bursts; most are never hovered).
+        _fill.Opacity = 0;
+        PointerEntered += OnFirstHover;
 
         var line = new Grid { Margin = new Thickness(Theme.S2, 0, Theme.S2, 0) };
         foreach (var w in new[] { GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
@@ -321,12 +331,8 @@ public sealed class PopRow : Grid
     public Brush CaptionBrush { set => _caption.Foreground = value; }
     public bool IsActive { set => _active.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
 
-    /// <summary>A row action failed somewhere (for the error sound).</summary>
-    public static event Action? AnyFailed;
-
     public void Shake()
     {
-        AnyFailed?.Invoke();
         if (!Anim.Enabled) return;
         _shake.Snap(0);
         _shake.Impulse(Motion.ShakeImpulse);
@@ -352,6 +358,26 @@ public sealed class PopRow : Grid
 
     /// <summary>A small pill button for a row action ("Disconnect", "Pair", "Connect").</summary>
     public static PillButton Action(string label, bool primary = false) => new(null, label, quiet: !primary) { Height = Theme.HubSmallPillHeight, VerticalAlignment = VerticalAlignment.Center };
+
+    private void OnFirstHover(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        PointerEntered -= OnFirstHover;
+        _fill.Opacity = 1;
+        Motions.HoverFade(this, _fill).SetTarget(1, Motion.Hover); // already over it: fade in now
+    }
+
+    /// <summary>A light "Pair"-style chip for rows built in bulk: a rounded label, no springs (it only needs a tap).</summary>
+    public static FrameworkElement Chip(string label, Action click)
+    {
+        var chip = new Border
+        {
+            Height = Theme.HubSmallPillHeight, CornerRadius = new CornerRadius(Theme.HubSmallPillHeight / 2), Padding = new Thickness(12, 0, 12, 0),
+            Background = Theme.PillButtonBrush, VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = label, FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold, FontSize = Theme.FontCaption, Foreground = Theme.PillButtonTextBrush, VerticalAlignment = VerticalAlignment.Center },
+        };
+        chip.Tapped += (_, e) => { e.Handled = true; click(); };
+        return chip;
+    }
 }
 
 /// <summary>

@@ -25,7 +25,7 @@ public sealed class SettingsExport
 
 /// <summary>
 /// "Customisation" tab: everything goes through <see cref="ThemeService"/> (live tokens, persisted);
-/// this adds the font, sounds, Looks, reset with undo, and export / import.
+/// this adds the font, reset with undo, and export / import.
 /// </summary>
 public sealed class CustomisationTabViewModel
 {
@@ -33,51 +33,24 @@ public sealed class CustomisationTabViewModel
     private readonly SettingsService _settings;
     private (CustomSettings custom, string? font)? _undo;
 
-    public CustomisationTabViewModel(SettingsService settings, ThemeService theme, SoundService sounds, FontService fonts)
+    public CustomisationTabViewModel(SettingsService settings, ThemeService theme, FontService fonts)
     {
         _settings = settings;
         Theme = theme;
-        Sounds = sounds;
         Fonts = fonts;
     }
 
     public ThemeService Theme { get; }
-    public SoundService Sounds { get; }
     public FontService Fonts { get; }
     public CustomSettings Current => Theme.Current;
     public bool CanUndo => _undo != null;
 
-    // ---- Looks ----
-    public void ApplyLook(LookValues look)
-    {
-        var next = Current.Clone();
-        next.ApplyLook(look);
-        Theme.ReplaceAll(next);
-    }
-
-    public void SaveLook(string name)
-    {
-        var look = new SavedLook { Name = name.Trim().Length > 0 ? name.Trim() : "My look" };
-        Current.CopyLookTo(look.Values);
-        Theme.Update(s => { s.SavedLooks.RemoveAll(l => l.Name == look.Name); s.SavedLooks.Add(look); });
-    }
-
-    public void RenameLook(SavedLook look, string name)
-    {
-        name = name.Trim();
-        if (name.Length == 0) return;
-        Theme.Update(s => { var l = s.SavedLooks.FirstOrDefault(x => x.Name == look.Name); if (l != null) l.Name = name; });
-    }
-
-    public void DeleteLook(SavedLook look) => Theme.Update(s => s.SavedLooks.RemoveAll(l => l.Name == look.Name));
-
     // ---- Reset / undo ----
-    /// <summary>Resets every customisation (saved Looks are kept) and the font; <see cref="Undo"/> brings it back.</summary>
+    /// <summary>Resets every customisation and the font; <see cref="Undo"/> brings it back.</summary>
     public void Reset()
     {
         _undo = (Current.Clone(), _settings.Current.FontId);
-        var fresh = new CustomSettings { SavedLooks = Current.SavedLooks.ToList() };
-        Theme.ReplaceAll(fresh);
+        Theme.ReplaceAll(new CustomSettings());
         Fonts.ResetToDefault();
     }
 
@@ -86,7 +59,7 @@ public sealed class CustomisationTabViewModel
         if (_undo is not { } u) return;
         _undo = null;
         Theme.ReplaceAll(u.custom);
-        var font = Fonts.Find(u.font) ?? Fonts.BundledFonts[0];
+        var font = Fonts.Find(u.font) ?? Fonts.Fonts[0];
         Fonts.Apply(font);
     }
 

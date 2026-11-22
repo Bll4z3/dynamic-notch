@@ -11,7 +11,7 @@ namespace DynamicNotch.Services;
 /// <summary>
 /// The single owner of the live visual tokens (Settings ▸ Customisation): accent (+ hover, subtle tint and
 /// on-accent text), corner radii, motion feel / speed, surface strength (border highlight, shadow, glow),
-/// the visualiser, notch scale / position, the collapsed notch's items and the hover timings. Views read
+/// the visualiser, notch scale / monitor, the collapsed notch's items and the hover timings. Views read
 /// the tokens from <see cref="Theme"/> / <see cref="Motion"/>; this service changes them and tells
 /// everything that caches a value:
 /// - accent: shared brushes are cross-faded in place (~250 ms; a frame callback is attached only while
@@ -24,7 +24,7 @@ namespace DynamicNotch.Services;
 public sealed class ThemeService
 {
     [Flags]
-    public enum Part { None = 0, Accent = 1, Radius = 2, Motion = 4, Surface = 8, Glow = 16, Visualizer = 32, Layout = 64, Collapsed = 128, Behaviour = 256, Sounds = 512, Performance = 1024, All = 0x7FF }
+    public enum Part { None = 0, Accent = 1, Radius = 2, Motion = 4, Surface = 8, Glow = 16, Visualizer = 32, Layout = 64, Collapsed = 128, Behaviour = 256, Performance = 1024, All = 0x5FF }
 
     private readonly SettingsService _settings;
     private readonly List<WeakReference<FrameworkElement>> _roots = new();
@@ -33,7 +33,11 @@ public sealed class ThemeService
     private readonly Stopwatch _fadeClock = new();
     private bool _fading, _radiusWalkPending;
     private Color? _albumColor;
-    private bool _musicShown;
+    private bool _musicShown, _musicPlaying, _settingsOpen;
+    private double _fadeMs = AccentFadeMs;
+
+    /// <summary>Cross-fade lengths: a picked accent, and the slower blend between songs' album colours.</summary>
+    public const double AccentFadeMs = 340, AlbumFadeMs = 700;
 
     public ThemeService(SettingsService settings)
     {
@@ -51,7 +55,7 @@ public sealed class ThemeService
     /// <summary>Raised (UI thread) after tokens changed; the argument says which parts.</summary>
     public event Action<Part>? Changed;
 
-    /// <summary>Raised when a token-driven element should replay something (accent ripple, motion demo, sound bars).</summary>
+    /// <summary>Raised when a token-driven element should replay something (accent ripple, motion demo).</summary>
     public event Action<Part>? Demo;
 
     // ---- Start-up ------------------------------------------------------------------------------------------
@@ -60,6 +64,7 @@ public sealed class ThemeService
     {
         var s = Current;
         Theme.SetRadii(s.CornerRadius, EffectiveTileRadius(s));
+        ButtonShape.SetRoundness(s.ButtonRoundness);
         Motion.SetFeel(s.MotionFeel, s.MotionSpeed);
         Theme.HighlightStrength = s.Highlight;
         Theme.ShadowIntensity = s.ShadowIntensity;
@@ -86,7 +91,7 @@ public sealed class ThemeService
         ApplyDiff(before, Current, animate);
     }
 
-    /// <summary>Replaces the whole customisation (Looks, reset, import, undo) and animates to it.</summary>
+    /// <summary>Replaces the whole customisation (reset, import, undo) and animates to it.</summary>
     public void ReplaceAll(CustomSettings next, bool animate = true)
     {
         var before = Current.Clone();
@@ -102,6 +107,7 @@ public sealed class ThemeService
         { parts |= Part.Accent; ApplyAccent(animate); }
         if (a.CornerRadius != b.CornerRadius || a.TileRadius != b.TileRadius || a.LinkTileRadius != b.LinkTileRadius)
         { parts |= Part.Radius; Theme.SetRadii(b.CornerRadius, EffectiveTileRadius(b)); ScheduleRadiusWalk(); }
+        if (a.ButtonRoundness != b.ButtonRoundness) { parts |= Part.Radius; ButtonShape.SetRoundness(b.ButtonRoundness); }
         if (a.MotionFeel != b.MotionFeel || a.MotionSpeed != b.MotionSpeed)
         { parts |= Part.Motion; Motion.SetFeel(b.MotionFeel, b.MotionSpeed); }
         if (a.Highlight != b.Highlight || a.ShadowIntensity != b.ShadowIntensity)
@@ -112,11 +118,10 @@ public sealed class ThemeService
             Theme.HighlightBorderBrush.Color = Theme.HighlightColor;
         }
         if (a.GlowEnabled != b.GlowEnabled || a.GlowIntensity != b.GlowIntensity || a.GlowSource != b.GlowSource) parts |= Part.Glow;
-        if (a.Visualizer != b.Visualizer) parts |= Part.Visualizer;
-        if (a.NotchScale != b.NotchScale || a.TopOffset != b.TopOffset || a.Monitor != b.Monitor) parts |= Part.Layout;
+        if (a.Visualizer != b.Visualizer || a.VisualizerColor != b.VisualizerColor) parts |= Part.Visualizer;
+        if (a.NotchScale != b.NotchScale || a.Monitor != b.Monitor) parts |= Part.Layout;
         if (a.ShowBatteryRing != b.ShowBatteryRing || a.ShowClock != b.ShowClock || a.ShowDate != b.ShowDate || a.ClockFormat != b.ClockFormat) parts |= Part.Collapsed;
         if (a.HoverDelayMs != b.HoverDelayMs || a.CollapseDelayMs != b.CollapseDelayMs) parts |= Part.Behaviour;
-        if (a.SoundsEnabled != b.SoundsEnabled || a.SoundPreset != b.SoundPreset || a.SoundVolume != b.SoundVolume || !a.SoundEvents.SequenceEqual(b.SoundEvents)) parts |= Part.Sounds;
         if (a.PerformanceMode != b.PerformanceMode) parts |= Part.Performance;
         if (parts != Part.None) Changed?.Invoke(parts);
     }
@@ -139,37 +144,66 @@ public sealed class ThemeService
         return AccentPresets.All.FirstOrDefault(p => p.Id == s.AccentPreset)?.Color ?? Theme.DefaultAccent;
     }
 
+    /// <summary>
+    /// "Follow album colour": the song's colour becomes the accent while the music page is open or music is
+    /// playing, so it flows through the whole notch (visualiser, glow, edge, progress, active tiles). While the
+    /// Settings window is open the chosen accent wins, so picking a colour there always shows straight away.
+    /// </summary>
     private Color ResolveAccent() =>
-        Current.FollowAlbumColor && _musicShown && _albumColor is { } album ? album : ChosenAccent();
+        AlbumAccentActive && _albumColor is { } album ? album : ChosenAccent();
 
-    /// <summary>The music page reports its extracted album colour (null = no art) and whether it is on screen.</summary>
-    public void SetAlbumColor(Color? color, bool musicShown)
+    /// <summary>True when the album colour is currently overriding the chosen accent.</summary>
+    public bool AlbumAccentActive => Current.FollowAlbumColor && _albumColor != null && (_musicShown || _musicPlaying) && !_settingsOpen;
+
+    /// <summary>The notch reports the extracted album colour (null = no art), whether the music page is on screen and whether music plays.</summary>
+    public void SetAlbumColor(Color? color, bool musicShown, bool playing)
     {
-        if (_albumColor == color && _musicShown == musicShown) return;
+        if (_albumColor == color && _musicShown == musicShown && _musicPlaying == playing) return;
+        bool songChanged = _albumColor != color;
         _albumColor = color;
         _musicShown = musicShown;
-        if (Current.FollowAlbumColor) ApplyAccent(animate: true);
+        _musicPlaying = playing;
+        if (Current.FollowAlbumColor) ApplyAccent(animate: true, songChanged ? AlbumFadeMs : AccentFadeMs);
+    }
+
+    /// <summary>The Settings window opened / closed (the chosen accent shows while it's open).</summary>
+    public void SetSettingsOpen(bool open)
+    {
+        if (_settingsOpen == open) return;
+        _settingsOpen = open;
+        if (Current.FollowAlbumColor && _albumColor != null) ApplyAccent(animate: true);
     }
 
     /// <summary>True when the accent is hard to see on the black notch (a small note warns about it).</summary>
     public static bool IsLowContrast(Color c) => Theme.Contrast(c, Theme.NotchColor) < 3.0;
 
-    private void ApplyAccent(bool animate)
+    private void ApplyAccent(bool animate, double fadeMs = AccentFadeMs)
     {
         var target = ResolveAccent();
         if (!animate || !Animation.Anim.Enabled) { StopFade(); Theme.ApplyAccent(target); return; }
+        if (!_fading && target == Theme.AccentColor) return; // nothing to fade (no frame callback for a no-op)
         _fadeFrom = Theme.AccentColor;
         _fadeTo = target;
+        _fadeMs = fadeMs / Motion.Speed;
         _fadeClock.Restart();
         if (!_fading) { _fading = true; CompositionTarget.Rendering += OnFadeFrame; }
     }
 
     private void OnFadeFrame(object? sender, object e)
     {
-        double t = Math.Min(1, _fadeClock.Elapsed.TotalMilliseconds / 250.0);
-        double eased = t * t * (3 - 2 * t);
-        Theme.ApplyAccent(Theme.Lerp(_fadeFrom, _fadeTo, eased));
+        double t = Math.Min(1, _fadeClock.Elapsed.TotalMilliseconds / _fadeMs);
+        double eased = t * t * t * (t * (6 * t - 15) + 10); // smootherstep: no visible start or stop
+        Theme.ApplyAccent(LerpLinear(_fadeFrom, _fadeTo, eased), final: t >= 1);
         if (t >= 1) StopFade();
+    }
+
+    /// <summary>Blends in linear light, so a fade between two saturated colours doesn't dip through a muddy grey.</summary>
+    private static Color LerpLinear(Color a, Color b, double t)
+    {
+        static double ToLin(byte v) { double s = v / 255.0; return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4); }
+        static byte ToSrgb(double l) { double s = l <= 0.0031308 ? l * 12.92 : 1.055 * Math.Pow(l, 1 / 2.4) - 0.055; return (byte)Math.Round(Math.Clamp(s, 0, 1) * 255); }
+        byte M(byte x, byte y) => ToSrgb(ToLin(x) + (ToLin(y) - ToLin(x)) * t);
+        return Color.FromArgb(0xFF, M(a.R, b.R), M(a.G, b.G), M(a.B, b.B));
     }
 
     private void StopFade()
@@ -193,6 +227,7 @@ public sealed class ThemeService
             CompositionTarget.Rendering -= h;
             _radiusWalkPending = false;
             foreach (var w in _roots) if (w.TryGetTarget(out var root)) RefreshRadii(root);
+            Insets.Refresh(); // card padding follows the radius
             RadiusChanged?.Invoke();
         };
         CompositionTarget.Rendering += h;

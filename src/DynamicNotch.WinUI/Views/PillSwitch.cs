@@ -20,10 +20,10 @@ namespace DynamicNotch.Views;
 /// </summary>
 public sealed class PillSwitch : UserControl
 {
-    private readonly Border _ring = new(), _off = new(), _on = new();
+    private readonly Border _ring = new(), _off = new(), _on = new(), _halo = new();
     private readonly Ellipse _thumbOff = new(), _thumbOn = new();
     private readonly CompositionPropertySet _p;
-    private readonly CompSpring _t, _shake;
+    private readonly CompSpring _t, _shake, _press;
     private bool _isOn;
 
     public PillSwitch()
@@ -43,9 +43,22 @@ public sealed class PillSwitch : UserControl
         var track = new Grid { Width = Theme.SwitchWidth, Height = Theme.SwitchHeight, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         _off.CornerRadius = _on.CornerRadius = radius;
         _off.Background = new SolidColorBrush(Theme.SwitchOffColor);
-        _on.Background = Theme.AccentBrush; // "on" carries the accent (live)
+        _on.Background = Theme.AccentGradientBrush; // "on" carries the accent (live), with a little depth
+        _on.BorderBrush = Theme.AccentBorderBrush;
+        _on.BorderThickness = new Thickness(1);
+        // A soft accent halo behind the track, fading in with "on".
+        _halo.Width = Theme.SwitchWidth + 22;
+        _halo.Height = Theme.SwitchHeight + 18;
+        _halo.Margin = new Thickness(-11, -9, -11, -9);
+        _halo.Background = Theme.AccentHaloBrush;
+        _halo.IsHitTestVisible = false;
+        root.Children.Add(_halo);
         track.Children.Add(_off);
         track.Children.Add(_on);
+        // Hover: the track lifts a shade (springs in and out).
+        var hover = new Border { CornerRadius = radius, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)) };
+        track.Children.Add(hover);
+        Motions.HoverFade(this, hover);
         foreach (var (e, colour) in new[] { (_thumbOff, Theme.SwitchThumbOffColor), (_thumbOn, Theme.SwitchThumbOnColor) })
         {
             e.Width = e.Height = Theme.SwitchThumbSize;
@@ -63,9 +76,11 @@ public sealed class PillSwitch : UserControl
         var c = tv.Compositor;
         _p = c.CreatePropertySet();
         _t = new CompSpring(_p, "t", Motion.SwitchThumb, 0);
+        _press = new CompSpring(_p, "k", Motion.Press, 0);
         _shake = new CompSpring(_p, "s", Motion.Shake, 0, precision: 20);
         tv.StartAnimation("Translation", Anim.Expr(c, "Vector3(p.s, 0, 0)", ("p", _p)));
         Anim.VisualOf(_on).StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.t, 0, 1)", ("p", _p)));
+        Anim.VisualOf(_halo).StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.t, 0, 1) * (0.55 + 0.25 * p.k)", ("p", _p)));
         float travel = (float)(Theme.SwitchWidth - 2 * Theme.SwitchThumbInset - Theme.SwitchThumbSize);
         foreach (var (e, on) in new[] { (_thumbOff, false), (_thumbOn, true) })
         {
@@ -74,9 +89,16 @@ public sealed class PillSwitch : UserControl
             move.SetScalarParameter("D", travel);
             v.StartAnimation("Translation", move);
             v.StartAnimation("Opacity", Anim.Expr(c, on ? "p.t > 0.5 ? 1 : 0" : "p.t > 0.5 ? 0 : 1", ("p", _p)));
+            // Press: the thumb squashes a little (wider, flatter) and springs back on release.
+            v.CenterPoint = new System.Numerics.Vector3((float)Theme.SwitchThumbSize / 2, (float)Theme.SwitchThumbSize / 2, 0);
+            v.StartAnimation("Scale", Anim.Expr(c, "Vector3(1 + 0.16 * p.k, 1 - 0.08 * p.k, 1)", ("p", _p)));
         }
 
         Tapped += (_, e) => { e.Handled = true; Toggle(); };
+        PointerPressed += (_, _) => _press.SetTarget(1, Motion.Press);
+        PointerReleased += (_, _) => _press.SetTarget(0, Motion.Press);
+        PointerExited += (_, _) => _press.SetTarget(0, Motion.Press);
+        PointerCaptureLost += (_, _) => _press.SetTarget(0, Motion.Press);
         KeyDown += (_, e) =>
         {
             if (e.Key is VirtualKey.Space or VirtualKey.Enter) { Toggle(); e.Handled = true; }
@@ -87,8 +109,6 @@ public sealed class PillSwitch : UserControl
 
     /// <summary>The user flipped the switch (the owner decides whether it sticks; see <see cref="IsOn"/>).</summary>
     public event Action<bool>? Toggled;
-    /// <summary>Any switch in the app was flipped by the user (for the toggle sound).</summary>
-    public static event Action<bool>? UserToggled;
 
     public bool IsOn
     {
@@ -109,10 +129,12 @@ public sealed class PillSwitch : UserControl
         _shake.Impulse(Motion.ShakeImpulse);
     }
 
+    /// <summary>Flips the switch as if it had been clicked (a tap on its row).</summary>
+    public void Flip() => Toggle();
+
     private void Toggle()
     {
         IsOn = !IsOn;
-        UserToggled?.Invoke(IsOn);
         Toggled?.Invoke(IsOn);
     }
 }

@@ -25,7 +25,7 @@ internal sealed class GeneralTabView : Grid
     {
         var stack = new StackPanel { Margin = new Thickness(0, 0, Theme.S3, Theme.S2) };
         stack.Children.Add(SettingsUi.Title("General"));
-        stack.Children.Add(SettingsUi.Subtitle("How the notch behaves. Looks and sounds are in Customisation."));
+        stack.Children.Add(SettingsUi.Subtitle("How the notch behaves. Colours, shape and motion are in Customisation."));
 
         // ---- Behaviour ----
         stack.Children.Add(new TextBlock { Text = "Behaviour", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
@@ -39,6 +39,52 @@ internal sealed class GeneralTabView : Grid
         toggles.Children.Add(SettingsUi.ToggleRow("Hide notch when an app is fullscreen", "Videos, games and presentations. It comes back when they exit.",
             () => vm.HideWhenFullscreen, v => vm.HideWhenFullscreen = v, vm, nameof(GeneralTabViewModel.HideWhenFullscreen)));
         stack.Children.Add(SettingsUi.Card(toggles));
+
+        // ---- Screenshot shelf ----
+        stack.Children.Add(new TextBlock { Text = "Screenshot shelf", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
+        var shots = new StackPanel();
+        shots.Children.Add(SettingsUi.ToggleRow("Screenshot shelf", "New screenshots (Win+Shift+S, PrtScn) land in the notch",
+            () => vm.ScreenshotShelf, v => vm.ScreenshotShelf = v, vm, nameof(GeneralTabViewModel.ScreenshotShelf)));
+        shots.Children.Add(Divider());
+        shots.Children.Add(SettingsUi.ToggleRow("Open the notch on a new screenshot", "It closes again after a few seconds",
+            () => vm.ScreenshotAutoOpen, v => vm.ScreenshotAutoOpen = v, vm, nameof(GeneralTabViewModel.ScreenshotAutoOpen)));
+        shots.Children.Add(Divider());
+        var keep = new Segmented(("5", "5"), ("10", "10"), ("20", "20")) { Width = 180, VerticalAlignment = VerticalAlignment.Center };
+        keep.Value = vm.ScreenshotKeep <= 5 ? "5" : vm.ScreenshotKeep <= 10 ? "10" : "20";
+        keep.Selected += id => vm.ScreenshotKeep = int.Parse(id);
+        shots.Children.Add(LabelRow("Keep", "How many recent screenshots the shelf holds", keep));
+        shots.Children.Add(Divider());
+        var folderText = new TextBlock { Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextTrimming = TextTrimming.CharacterEllipsis, Margin = Theme.GapTopS1 };
+        void ShowFolder() { folderText.Text = vm.ScreenshotSaveFolder; ToolTipService.SetToolTip(folderText, vm.ScreenshotSaveFolder); }
+        ShowFolder();
+        var change = new PillButton(Icons.Folder, "Change", quiet: true) { VerticalAlignment = VerticalAlignment.Center, Margin = Theme.GapLeftS3 };
+        change.Click += async () =>
+        {
+            try
+            {
+                var picker = new Windows.Storage.Pickers.FolderPicker { SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary };
+                picker.FileTypeFilter.Add("*");
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, SettingsWindow.CurrentHandle);
+                var folder = await picker.PickSingleFolderAsync();
+                if (folder != null) { vm.ScreenshotSaveFolder = folder.Path; ShowFolder(); }
+            }
+            catch { }
+        };
+        var folderRow = new Grid { MinHeight = 40 };
+        folderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        folderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var folderLabel = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        folderLabel.Children.Add(new TextBlock { Text = "Save to", Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold });
+        folderLabel.Children.Add(folderText);
+        folderRow.Children.Add(folderLabel);
+        Grid.SetColumn(change, 1);
+        folderRow.Children.Add(change);
+        shots.Children.Add(folderRow);
+        stack.Children.Add(SettingsUi.Card(shots));
+
+        // ---- Spotify: connect your account for the media player's Like button ----
+        stack.Children.Add(new TextBlock { Text = "Spotify", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
+        stack.Children.Add(SettingsUi.Card(SpotifyCard(vm)));
 
         stack.Children.Add(new TextBlock { Text = "Ask hotkey", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
         var hotkey = new Grid { MinHeight = 40 };
@@ -61,6 +107,72 @@ internal sealed class GeneralTabView : Grid
         Children.Add(new ScrollViewer { Content = stack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
     }
 
+    /// <summary>
+    /// Spotify: your Spotify app's Client ID, then Connect (signs in through your browser) / Disconnect, with the
+    /// status and a short how-to (the redirect URI to add to the Spotify app).
+    /// </summary>
+    private static FrameworkElement SpotifyCard(GeneralTabViewModel vm)
+    {
+        var panel = new StackPanel { Spacing = Theme.S2 };
+        var title = new TextBlock { Text = "Like button on the media player", Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold };
+        panel.Children.Add(title);
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Create a free app at developer.spotify.com/dashboard, add {SpotifyService.RedirectUri} as a Redirect URI, tick \"Web API\", then paste its Client ID here and press Connect.",
+            Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None,
+        });
+        var row = new Grid { ColumnSpacing = Theme.S2 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var id = new TextBox { PlaceholderText = "Client ID", Text = vm.SpotifyClientId, FontFamily = Theme.MonoFont, FontSize = Theme.FontBody, Height = Theme.SettingsFieldHeight, Padding = Theme.SettingsFieldPadding, VerticalContentAlignment = VerticalAlignment.Center };
+        InputStyle.Apply(id);
+        id.LostFocus += (_, _) => vm.SpotifyClientId = id.Text;
+        row.Children.Add(id);
+        var connect = new PillButton(null, "Connect") { VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(connect, 1);
+        row.Children.Add(connect);
+        panel.Children.Add(row);
+        var status = new TextBlock { Style = SettingsUi.StyleOf("CaptionText"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None };
+        panel.Children.Add(status);
+        bool busy = false;
+        void Show(string? message = null, bool error = false)
+        {
+            bool on = vm.Spotify?.IsConnected == true;
+            connect.SetContent(null!, busy ? "Waiting…" : on ? "Disconnect" : "Connect");
+            status.Text = message ?? (on ? "Connected. The heart shows when Spotify is playing." : "Not connected.");
+            status.Foreground = error ? Theme.DangerBrush : on ? Theme.SuccessBrush : Theme.SecondaryText;
+        }
+        connect.Click += async () =>
+        {
+            if (vm.Spotify is not { } sp || busy) return;
+            vm.SpotifyClientId = id.Text;
+            if (sp.IsConnected) { sp.Disconnect(); Show(); return; }
+            busy = true;
+            Show("Finish signing in in your browser…");
+            var error = await sp.ConnectAsync();
+            busy = false;
+            Show(error, error != null);
+        };
+        Show();
+        return panel;
+    }
+
+    /// <summary>A row with a bold label + caption on the left and <paramref name="control"/> on the right.</summary>
+    private static FrameworkElement LabelRow(string title, string caption, FrameworkElement control)
+    {
+        var g = new Grid { MinHeight = 44 };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = title, Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold });
+        text.Children.Add(new TextBlock { Text = caption, Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, Margin = Theme.GapTopS1 });
+        g.Children.Add(text);
+        control.Margin = Theme.GapLeftS3;
+        Grid.SetColumn(control, 1);
+        g.Children.Add(control);
+        return g;
+    }
+
     private static Rectangle Divider() => new() { Height = 1, Fill = Theme.CardBorderBrush, Margin = new Thickness(0, Theme.S1, 0, Theme.S1) };
 
     // =======================================================================================================
@@ -72,7 +184,7 @@ internal sealed class GeneralTabView : Grid
         public SampleCard()
         {
             Background = Theme.CardBrush;
-            BorderBrush = Theme.CardBorderBrush;
+            BorderBrush = Theme.CardEdgeBrush;
             BorderThickness = new Thickness(1);
             CornerRadius = Theme.RadiusSmall;
             Padding = Theme.PadS3;
@@ -135,18 +247,15 @@ internal sealed class GeneralTabView : Grid
 
     // =======================================================================================================
     /// <summary>
-    /// Pill dropdown of fonts. The list opens in a light-dismiss popup under the pill: Bundled, System (only
-    /// fonts installed here) and All installed fonts (searchable, the first 50 matches are listed). Every
-    /// option is drawn in its own face.
+    /// Pill dropdown of the ten fonts (<see cref="FontService.Fonts"/>), in a light-dismiss popup under the
+    /// pill. Every option is drawn in its own face.
     /// </summary>
     internal sealed class FontPicker : Grid
     {
-        private const int MaxInstalled = 50;
         private readonly FontService _fonts;
         private readonly TextBlock _label = new();
         private readonly Popup _popup = new();
-        private readonly StackPanel _items = new(), _installed = new();
-        private readonly TextBox _search = new();
+        private readonly StackPanel _items = new();
         private readonly CompSpring _open;
         private readonly Border _card = new();
 
@@ -161,7 +270,7 @@ internal sealed class GeneralTabView : Grid
             var lighten = new Border { Background = Theme.PillLightenBrush, CornerRadius = radius };
             Children.Add(back);
             Children.Add(lighten);
-            var row = new Grid { Margin = Theme.AskInputPadding };
+            var row = new Grid { Margin = Theme.SettingsFieldPadding };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             _label.FontSize = Theme.FontBody + 1;
@@ -193,12 +302,6 @@ internal sealed class GeneralTabView : Grid
             _popup.Child = _card;
             _popup.IsLightDismissEnabled = true;
             _popup.Closed += (_, _) => Hovered?.Invoke(null); // the sample returns to the chosen font
-            _search.PlaceholderText = "Search installed fonts";
-            _search.FontFamily = Theme.Font;
-            _search.FontSize = Theme.FontBody;
-            _search.Margin = new Thickness(Theme.S1, 0, Theme.S1, Theme.S1);
-            InputStyle.Apply(_search);
-            _search.TextChanged += (_, _) => FillInstalled();
 
             var c = Anim.VisualOf(_card).Compositor;
             var (open, set) = Motions.Value(c, Motion.Pop, 0);
@@ -239,33 +342,8 @@ internal sealed class GeneralTabView : Grid
         private void Build()
         {
             _items.Children.Clear();
-            Header("Bundled");
-            foreach (var f in _fonts.BundledFonts) _items.Children.Add(Item(f));
-            var system = _fonts.SystemFonts;
-            if (system.Count > 0)
-            {
-                Header("System");
-                foreach (var f in system) _items.Children.Add(Item(f));
-            }
-            Header("All installed fonts");
-            _items.Children.Add(_search);
-            _items.Children.Add(_installed);
-            FillInstalled();
+            foreach (var f in _fonts.Fonts) _items.Children.Add(Item(f));
         }
-
-        private void FillInstalled()
-        {
-            _installed.Children.Clear();
-            var list = _fonts.SearchInstalled(_search.Text, MaxInstalled);
-            foreach (var f in list) _installed.Children.Add(Item(f));
-            if (list.Count == 0)
-                _installed.Children.Add(new TextBlock { Text = "No fonts match", Style = SettingsUi.StyleOf("CaptionText"), Margin = new Thickness(Theme.S3, Theme.S1, 0, Theme.S2) });
-            else if (list.Count == MaxInstalled)
-                _installed.Children.Add(new TextBlock { Text = "Type to find more", Style = SettingsUi.StyleOf("CaptionText"), Margin = new Thickness(Theme.S3, Theme.S1, 0, Theme.S2) });
-        }
-
-        private void Header(string text) =>
-            _items.Children.Add(new TextBlock { Text = text, Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S3, Theme.S2, 0, Theme.S1) });
 
         private FrameworkElement Item(FontChoice f)
         {

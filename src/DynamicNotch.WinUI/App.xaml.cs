@@ -86,12 +86,20 @@ public partial class App : Application
         var wifi = new WifiService();
         var btDevices = Track(new BluetoothDeviceService());
         var hub = new HubViewModel(settings, quick, audio, brightness, notifications, wifi, btDevices, devices);
-        var sounds = new SoundService(theme, audio);
-        var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus, updates, fonts, theme, sounds);
+        var screenshots = Track(new ScreenshotService());
+        var shots = new ScreenshotShelfViewModel(settings, screenshots);
+        var quickTimer = new QuickTimerViewModel();
+        var clipVm = new ClipboardViewModel(clipboard);
+        var spotify = new SpotifyService(settings);
+        var musicVm = new MusicViewModel(media);
+        var spotifyLike = new SpotifyLikeViewModel(musicVm, spotify);
+        var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus, updates, fonts, theme);
+        settingsVm.General.Spotify = spotify;
+        spotifyLike.ConnectRequested += () => Views.SettingsWindow.ShowSingle(settingsVm);
 
         var vm = new MainViewModel(settings,
-            new MusicViewModel(media),
-            new ClipboardViewModel(clipboard),
+            musicVm,
+            clipVm,
             new ShelfViewModel(shelf),
             new AskViewModel(claude, secrets),
             new StatusViewModel(clock, battery),
@@ -101,7 +109,7 @@ public partial class App : Application
             new UsageViewModel(new ClaudeUsageService()),
             focus,
             activity,
-            hub);
+            hub) { Screenshots = shots, QuickTimer = quickTimer, SpotifyLike = spotifyLike, Palette = new CommandPaletteViewModel(settings, clipVm, shots, claude, quickTimer) };
 
         foreach (var src in new Action<Action<PillRequest>>[]
                  {
@@ -111,8 +119,25 @@ public partial class App : Application
 
         // ---- Activity pills: every source feeds the ONE activity host ----
         audio.VolumeChanged += v => activity.Show(new Activity(ActivityKind.Volume, "Volume", v.Level, On: v.Muted, OnSet: audio.SetVolume));
-        brightness.Changed += level => activity.Show(new Activity(ActivityKind.Brightness, "Brightness", level / 100.0,
+        // Brightness: only when the user pressed a brightness key. Changes Windows makes by itself (adaptive /
+        // auto brightness, dimming) also arrive through brightness.Changed, so they are ignored here; the
+        // notch's own brightness slider still follows every change (HubViewModel listens separately).
+        var brightnessKeys = Track(new BrightnessKeyService());
+        void ShowBrightness(int level) => activity.Show(new Activity(ActivityKind.Brightness, "Brightness", level / 100.0,
             OnSet: x => brightness.Set((int)Math.Round(x * 100))));
+        bool brightnessShownForKey = false;
+        var brightnessAtLimit = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        brightnessAtLimit.IsRepeating = false;
+        brightnessAtLimit.Interval = TimeSpan.FromMilliseconds(350);
+        // A key press that doesn't change the level (already at 0 or 100 %) still shows the pill, like Windows does.
+        brightnessAtLimit.Tick += (_, _) => { brightnessAtLimit.Stop(); if (!brightnessShownForKey && brightness.IsSupported) ShowBrightness(brightness.Level); };
+        brightnessKeys.Pressed += _ => { brightnessShownForKey = false; brightnessAtLimit.Stop(); brightnessAtLimit.Start(); };
+        brightness.Changed += level =>
+        {
+            if (!brightnessKeys.RecentlyPressed) return;
+            brightnessShownForKey = true;
+            ShowBrightness(level);
+        };
         power.PlugChanged += (plugged, pct, estimate) =>
         {
             string title = plugged ? "Charging" : "On battery";
@@ -160,7 +185,6 @@ public partial class App : Application
         ApplyPower();
         quick.Changed += ApplyPower;
         theme.Changed += p => { if (p.HasFlag(ThemeService.Part.Performance)) ApplyPower(); };
-        WireSounds(sounds, vm, activity, power, settings);
         _window.ShowNotch();
         // Hide the notch while another app is fullscreen (Settings ▸ General).
         var fullscreen = Track(new FullscreenService(() => _window?.Handle ?? IntPtr.Zero));
@@ -200,12 +224,27 @@ public partial class App : Application
         var keys = Track(new KeyboardHookService(DispatcherQueue.GetForCurrentThread()));
         keys.Start();
         keys.PrimeCapsLock(); // only real changes from here on raise the pill
+        // Screenshot shelf: new screenshots land on the Screenshots page (see ScreenshotService for how they're told apart).
+        screenshots.PrintScreenTick = () => keys.LastPrintScreenTick;
+        screenshots.Captured += async (path, owned) =>
+        {
+            var item = await shots.AddAsync(path, owned);
+            _window?.OnScreenshotAdded(item, settings.Current.ScreenshotAutoOpen);
+        };
+        void SyncScreenshots()
+        {
+            screenshots.SetRunning(settings.Current.ScreenshotShelf && pages.IsShown(PageId.Screenshots));
+            shots.ApplyLimit();
+        }
+        pages.Changed += SyncScreenshots;
+        settings.Changed += SyncScreenshots;
+        SyncScreenshots();
         keys.CapsLockChanged += on => activity.Show(new Activity(ActivityKind.CapsLock, on ? "Caps Lock on" : "Caps Lock off", On: on));
         _window.AttachKeyboard(keys);
         // Settings (single window); the hook never intercepts keys while it is in front.
         vm.OpenSettingsRequested += () => Views.SettingsWindow.ShowSingle(settingsVm);
         vm.OpenApiKeyRequested += () => { settingsVm.SelectApiKey(); Views.SettingsWindow.ShowSingle(settingsVm); };
-        Views.SettingsWindow.HandleChanged += h => keys.PassThroughWindow = h;
+        Views.SettingsWindow.HandleChanged += h => { keys.PassThroughWindow = h; theme.SetSettingsOpen(h != IntPtr.Zero); };
         // A new UI font: every open window refreshes its text with a short cross-fade (no restart).
         fonts.FontChanged += previous =>
         {
@@ -249,16 +288,62 @@ public partial class App : Application
         power.Start();
         audio.Start();
         brightness.Start();
+        brightnessKeys.Start();
+        brightnessKeys.FallbackKeyTick = () => keys.LastKeyTick; // PCs whose brightness keys aren't HID buttons
         updates.Start();
         _ = quick.StartAsync();
         if (pages.IsEnabled(PageId.Music)) await media.StartAsync();
-        _tray.SetStartup(await StartupService.IsEnabledAsync());
+        // The real state wins (Task Manager / Windows Settings can change it while the app is closed), so the
+        // switch in Settings ▸ General and the saved value match what Windows will actually do.
+        bool startup = await StartupService.IsEnabledAsync();
+        _tray.SetStartup(startup);
+        if (settings.Current.StartWithWindows != startup) settings.Update(s => s.StartWithWindows = startup);
+        settingsVm.General.RefreshToggles();
         await notifications.StartAsync();
+
+        // Dev: `--palette [text]` opens the command palette (with that text typed) a moment after start.
+        int palArg = Array.FindIndex(_args, a => a.Equals("--palette", StringComparison.OrdinalIgnoreCase));
+        if (palArg >= 0)
+        {
+            string text = palArg + 1 < _args.Length && !_args[palArg + 1].StartsWith("--") ? _args[palArg + 1] : "";
+            var pt = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            pt.IsRepeating = false;
+            pt.Interval = TimeSpan.FromMilliseconds(3000);
+            pt.Tick += (_, _) => { pt.Stop(); _window?.DevPalette(text); };
+            pt.Start();
+            _devTimers.Add(pt); // kept referenced, or it can be collected before it fires
+        }
+        if (_args.Contains("--markup", StringComparer.OrdinalIgnoreCase))
+        {
+            var mt = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            mt.IsRepeating = false;
+            mt.Interval = TimeSpan.FromMilliseconds(1500);
+            mt.Tick += (_, _) => { mt.Stop(); _window?.DevMarkup(); };
+            mt.Start();
+            _devTimers.Add(mt); // kept referenced, or it can be collected before it fires
+        }
+        // Dev: `--header notifications|quick` opens the header pop-up a moment after start (use with --open).
+        int headerArg = Array.FindIndex(_args, a => a.Equals("--header", StringComparison.OrdinalIgnoreCase));
+        if (headerArg >= 0)
+        {
+            var panel = headerArg + 1 < _args.Length && _args[headerArg + 1].StartsWith("q", StringComparison.OrdinalIgnoreCase)
+                ? PageId.QuickActions : PageId.Notifications;
+            var ht = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            ht.IsRepeating = false;
+            ht.Interval = TimeSpan.FromMilliseconds(1500);
+            ht.Tick += (_, _) => { ht.Stop(); _window?.DevHeaderPopup(panel); };
+            ht.Start();
+            _devTimers.Add(ht); // kept referenced, or it can be collected before it fires
+        }
 
         int open = Array.FindIndex(_args, a => a.Equals("--open", StringComparison.OrdinalIgnoreCase));
         if (open >= 0)
         {
-            int page = open + 1 < _args.Length && int.TryParse(_args[open + 1], out var pg) ? pg : 0;
+            // `--open <index|music|clipboard|ask|usage|focus|hub> [delay ms]`: pins the notch open on that page.
+            string which = open + 1 < _args.Length ? _args[open + 1] : "0";
+            int page = int.TryParse(which, out var pg) ? pg
+                : Enum.TryParse<PageId>(which, ignoreCase: true, out var id) ? Math.Max(0, vm.Pages.Enabled.ToList().IndexOf(id)) : 0;
+            _window.DevHoldOpen = true;
             int delay = open + 2 < _args.Length && int.TryParse(_args[open + 2], out var dl) ? dl : 0;
             if (delay <= 0) _window.PinOpen(page);
             else
@@ -295,12 +380,12 @@ public partial class App : Application
             t.Interval = TimeSpan.FromMilliseconds(1800);
             t.Tick += (_, _) =>
             {
-                var hub = _window?.DevHub;
-                if (hub == null) return;
+                var quick = _window?.DevQuickActions;
+                if (quick == null) return;
                 int s = step++;
-                if (s == 0) { _window!.PinOpen(Math.Max(0, vm.Pages.IndexOf(PageId.Hub))); return; }
-                if (s > 16) { hub.ClosePopover(); t.Stop(); return; }
-                if (s % 2 == 1) hub.DevOpenPopover(bluetooth: s <= 8); else hub.ClosePopover();
+                if (s == 0) { _window!.PinOpen(0); _window.DevHeaderPopup(PageId.QuickActions); return; }
+                if (s > 16) { quick.ClosePopover(); t.Stop(); return; }
+                if (s % 2 == 1) quick.DevOpenPopover(bluetooth: s <= 8); else quick.ClosePopover();
             };
             t.Start();
         }
@@ -309,7 +394,7 @@ public partial class App : Application
         if (settingsArg >= 0)
         {
             string tab = settingsArg + 1 < _args.Length ? _args[settingsArg + 1].ToLowerInvariant() : "";
-            int tabIndex = tab switch { "custom" => 1, "key" => 2, "pages" => 3, "pills" => 4, "focus" => 5, "updates" => 6, _ => 0 };
+            int tabIndex = tab switch { "custom" => 1, "key" => 2, "layout" => 3, "pages" => 3, "palette" => 4, "pills" => 5, "focus" => 6, "updates" => 7, _ => 0 };
             settingsVm.SelectedTab = settingsVm.Tabs[tabIndex];
             Views.SettingsWindow.ShowSingle(settingsVm);
         }
@@ -330,7 +415,7 @@ public partial class App : Application
                 {
                     case 0:
                         if (_args.Contains("focus", StringComparer.OrdinalIgnoreCase)) _window?.InvokeAskHotkey(); // takes keyboard focus, like the hotkey
-                        else _window?.PinOpen(Math.Max(0, vm.Pages.IndexOf(PageId.Ask)));
+                        else { _window?.PinOpen(0); _window?.InvokeAskHotkey(); }
                         break;
                     case 1:
                         if (_args.Contains("focus", StringComparer.OrdinalIgnoreCase)) { t.Stop(); break; } // focus check: just the open box
@@ -427,34 +512,6 @@ public partial class App : Application
         }
     }
 
-    /// <summary>Notch events → sounds (each plays only if sounds are on, the preset isn't Off and the event is enabled).</summary>
-    private void WireSounds(SoundService sounds, MainViewModel vm, ActivityViewModel activity, PowerService power, SettingsService settings)
-    {
-        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(MainViewModel.PageIndex) && _window?.IsExpanded == true) sounds.Play("page"); };
-        if (_window != null)
-            _window.StateChanged += (prev, next) =>
-            {
-                if (next == NotchState.Expanded) sounds.Play("expand");
-                else if (prev == NotchState.Expanded && next == NotchState.Collapsed) sounds.Play("collapse");
-            };
-        vm.PillAccepted += p => sounds.Play(p.Source == PillSource.App ? "notification" : "pill");
-        activity.Updated += (a, sameKind) =>
-        {
-            switch (a.Kind)
-            {
-                case ActivityKind.CapsLock: sounds.Play(a.On ? "capson" : "capsoff"); break;
-                case ActivityKind.Charging when !sameKind: sounds.Play(a.On ? "plug" : "unplug"); break;
-                case ActivityKind.LowBattery when !sameKind: sounds.Play("lowbattery"); break;
-                case ActivityKind.Update when !sameKind && a.Title.StartsWith("Update available"): sounds.Play("update"); break;
-                case ActivityKind.Volume or ActivityKind.Brightness: sounds.Play("tick"); break; // throttled to ≥ 120 ms
-                case ActivityKind.Download when !sameKind && !a.On: sounds.Play("pill"); break;
-            }
-        };
-        vm.Ask.SoundCue += sounds.Play;
-        Views.PillSwitch.UserToggled += on => sounds.Play(on ? "toggleon" : "toggleoff");
-        Views.PopRow.AnyFailed += () => sounds.Play("error");
-    }
-
     private DispatcherQueueTimer? _devPerfAll;
 
     /// <summary>Dev (`--perf-all`): startup time, a quiet idle window, then each animation traced in perf.log.</summary>
@@ -485,15 +542,13 @@ public partial class App : Application
             int to = p;
             steps.Add(($"Page switch {vm.Pages.Enabled[to - 1]} → {vm.Pages.Enabled[to]}", () => vm.PageIndex = to));
         }
-        int hub = vm.Pages.Enabled.ToList().IndexOf(PageId.Hub);
-        if (hub >= 0)
-        {
-            steps.Add(($"Page switch → Hub", () => vm.PageIndex = hub));
-            steps.Add(("!Bluetooth", () => _window?.DevHub.DevOpenPopover(true)));
-            steps.Add(("-close", () => _window?.DevHub.ClosePopover()));
-            steps.Add(("!Wi-Fi", () => _window?.DevHub.DevOpenPopover(false)));
-            steps.Add(("-close", () => _window?.DevHub.ClosePopover()));
-        }
+        steps.Add(("Quick actions pop-up", () => _window?.DevHeaderPopup(PageId.QuickActions)));
+        steps.Add(("!Bluetooth", () => _window?.DevQuickActions.DevOpenPopover(true)));
+        steps.Add(("-close", () => _window?.DevQuickActions.ClosePopover()));
+        steps.Add(("!Wi-Fi", () => _window?.DevQuickActions.DevOpenPopover(false)));
+        steps.Add(("-close", () => _window?.DevQuickActions.ClosePopover()));
+        steps.Add(("Notifications pop-up", () => _window?.DevHeaderPopup(PageId.Notifications)));
+        steps.Add(("-close", () => _window?.DevHeaderPopup(null)));
         int clip = vm.Pages.Enabled.ToList().IndexOf(PageId.Clipboard);
         if (clip >= 0)
         {
@@ -587,6 +642,8 @@ public partial class App : Application
         return Windows.Graphics.Imaging.SoftwareBitmap.CreateCopyFromBuffer(System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.AsBuffer(px),
             Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, w, h, Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied);
     }
+
+    private readonly List<object> _devTimers = new();
 
     private T Track<T>(T disposable) where T : IDisposable
     {

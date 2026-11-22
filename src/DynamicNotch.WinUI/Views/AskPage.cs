@@ -67,7 +67,10 @@ public sealed class AskPage : UserControl
         clock.Text = status.TimeText;
         status.PropertyChanged += (_, e) => { if (e.PropertyName is nameof(StatusViewModel.TimeText) or "" or null) clock.Text = status.TimeText; };
         right.Children.Add(clock);
-        right.Children.Add(new IconButton(26, Theme.IconSmall) { Icon = Icons.Settings, Foreground = Theme.SecondaryText, Command = ask.OpenSettingsCommand, Tooltip = "Settings", Margin = Theme.GapLeftS1 });
+        right.Children.Add(new IconButton(26, Theme.IconSmall) { Icon = Icons.Settings, Foreground = Theme.SecondaryText, Command = ask.OpenSettingsCommand, Tooltip = "Claude API key", Margin = Theme.GapLeftS1 });
+        _close = new IconButton(26, Theme.IconSmall) { Icon = Icons.Close, Foreground = Theme.SecondaryText, Tooltip = "Close (Esc)", Margin = Theme.GapLeftS1 };
+        _close.Click += () => CloseRequested?.Invoke();
+        right.Children.Add(_close);
         _header.Children.Add(right);
         _root.Children.Add(_header);
 
@@ -85,8 +88,8 @@ public sealed class AskPage : UserControl
         Row(_idleInputRow, _input, _send1, new PillButton(Icons.Crop, "Select area", quiet: true) { Command = ask.SelectAreaCommand, Margin = Theme.GapLeftS2, VerticalAlignment = VerticalAlignment.Center });
         _idle.Children.Add(_idleInputRow);
         _idleRow2.Margin = Theme.GapTopS2;
-        _idleRow2.Children.Add(new TextBlock { Text = $"{AppConfig.AskHotkeyLabel}  ·  Esc to cancel", Style = TextStyle("CaptionText"), HorizontalAlignment = HorizontalAlignment.Center });
-        Dots = new PageNavigator(notch) { HorizontalAlignment = HorizontalAlignment.Center, Margin = Theme.GapTopS1 };
+        _idleRow2.Children.Add(new TextBlock { Text = $"{AppConfig.AskHotkeyLabel}  ·  Esc to close", Style = TextStyle("CaptionText"), HorizontalAlignment = HorizontalAlignment.Center });
+        Dots = new PageNavigator(notch) { HorizontalAlignment = HorizontalAlignment.Center, Margin = Theme.GapTopS1, Visibility = Visibility.Collapsed };
         _idleRow2.Children.Add(Dots);
         _idle.Children.Add(_idleRow2);
         _panels.Children.Add(_idle);
@@ -152,7 +155,23 @@ public sealed class AskPage : UserControl
     public event Action<ImageThumb>? ThumbPreviewRequested;
     public event Action? ThumbPreviewEnded;
 
+    /// <summary>The × in the header (or Esc): back to the pages.</summary>
+    public event Action? CloseRequested;
+
+    private readonly IconButton _close;
+
+    /// <summary>Page dots, shown when Ask is one of the notch's pages (Settings ▸ Layout).</summary>
     public PageNavigator Dots { get; }
+
+    /// <summary>True when Ask is a page: page dots instead of the × (which belongs to the pop-up).</summary>
+    public bool PageMode
+    {
+        set
+        {
+            Dots.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+            _close.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
+        }
+    }
 
     /// <summary>Blocks of the staggered entrance (same order as WPF: header, input row, caption + dots).</summary>
     public IEnumerable<(FrameworkElement element, int order)> StaggerBlocks =>

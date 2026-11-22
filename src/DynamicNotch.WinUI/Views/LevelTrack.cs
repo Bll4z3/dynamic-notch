@@ -116,6 +116,32 @@ public sealed class LevelTrack : Grid
     /// <summary>Draws the fill with a shared brush (e.g. <see cref="Theme.AccentBrush"/>, so it follows the accent live).</summary>
     public Brush FillBrush { set => _fill.Background = _shimmer.Background = value; }
 
+    /// <summary>
+    /// Settings sliders: an accent halo behind the thumb and an accent rim on it. The halo rides the thumb's
+    /// own expressions (no extra springs), so it costs nothing until the thumb is shown.
+    /// </summary>
+    public bool ThumbGlow
+    {
+        set
+        {
+            if (!value || _thumbGlow != null) return;
+            const double size = 30;
+            var glow = _thumbGlow = new Ellipse { Width = size, Height = size, Fill = Theme.AccentHaloBrush, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+            Children.Insert(Children.IndexOf(_thumb), glow);
+            _thumb.Stroke = Theme.AccentBrush;
+            _thumb.StrokeThickness = 2;
+            var c = _p.Compositor;
+            var gv = Anim.VisualOf(glow, translation: true);
+            gv.CenterPoint = new Vector3((float)size / 2, (float)size / 2, 0);
+            var move = Anim.Expr(c, "Vector3(Clamp(p.v, 0, 1) * p.w - T, 0, 0)", ("p", _p));
+            move.SetScalarParameter("T", (float)size / 2);
+            gv.StartAnimation("Translation", move);
+            gv.StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.h, 0, 1)", ("p", _p)));
+            gv.StartAnimation("Scale", Anim.Expr(c, "Vector3(0.5 + 0.5 * Clamp(p.h, 0, 1.15), 0.5 + 0.5 * Clamp(p.h, 0, 1.15), 1)", ("p", _p)));
+        }
+    }
+    private Ellipse? _thumbGlow;
+
     /// <summary>The user let go after dragging (commit point for continuous values).</summary>
     public event Action? DragEnded;
 

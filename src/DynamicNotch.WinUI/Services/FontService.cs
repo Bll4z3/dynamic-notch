@@ -7,12 +7,12 @@ using Microsoft.UI.Xaml.Media;
 
 namespace DynamicNotch.Services;
 
-public enum FontGroup { Bundled, System, Installed }
+public enum FontGroup { Bundled, System }
 
 /// <summary>
-/// One choosable UI font. Bundled fonts are app resources (Inter is four static files; the others are one
-/// variable file each, so every weight comes from the same file); system / installed fonts are referred to
-/// by family name. <see cref="Id"/> is what settings.json stores.
+/// One choosable UI font. Bundled fonts are app resources (Inter and Poppins are four static files; the
+/// others are one variable file each, so every weight comes from the same file); the one system font
+/// (Segoe UI Variable, built into Windows 11) is referred to by family name. <see cref="Id"/> is what settings.json stores.
 /// </summary>
 public sealed record FontChoice(string Id, string Name, FontGroup Group, string Regular, string Medium, string SemiBold, string Bold)
 {
@@ -32,7 +32,6 @@ public sealed class FontService
 {
     public const string DefaultId = "bundled:Inter";
     private readonly SettingsService _settings;
-    private List<string>? _installed;
 
     public FontService(SettingsService settings) => _settings = settings;
 
@@ -54,79 +53,56 @@ public sealed class FontService
         return new FontChoice(DefaultId, "Inter", FontGroup.Bundled, F("Regular"), F("Medium"), F("SemiBold"), F("Bold"));
     }
 
+    /// <summary>A family shipped as one static file per weight (Family-Regular.ttf, Family-Medium.ttf…).</summary>
+    private static FontChoice BundledStatic(string family)
+    {
+        string F(string w) => $"ms-appx:///Assets/Fonts/{family}-{w}.ttf#{family}, ms-appx:///Assets/Fonts/{family}-{w}.ttf#{family} {w}, Segoe UI Variable Text, Segoe UI";
+        return new FontChoice("bundled:" + family, family, FontGroup.Bundled, F("Regular"), F("Medium"), F("SemiBold"), F("Bold"));
+    }
+
     private static FontChoice System(string family, string display) =>
         new("system:" + display, display, FontGroup.System, family, family, family, family);
 
-    public IReadOnlyList<FontChoice> BundledFonts { get; } = new[]
+    /// <summary>
+    /// The ten fonts on offer: clean, modern sans-serifs only. Nine ship with the app (they work on any PC);
+    /// Segoe UI Variable is Windows 11's own UI font and is listed only where it's installed. A saved font
+    /// that's no longer here (an older version offered more) falls back to the default in <see cref="ApplySaved"/>.
+    /// </summary>
+    public IReadOnlyList<FontChoice> Fonts => _fonts ??= BuildList();
+    private IReadOnlyList<FontChoice>? _fonts;
+
+    private IReadOnlyList<FontChoice> BuildList()
     {
-        Inter(),
-        Bundled("Geist.ttf", "Geist"),
-        Bundled("DMSans.ttf", "DM Sans", "DM Sans 14pt"),
-        Bundled("Manrope.ttf", "Manrope"),
-        Bundled("PlusJakartaSans.ttf", "Plus Jakarta Sans"),
-        Bundled("Outfit.ttf", "Outfit"),
-        Bundled("SpaceGrotesk.ttf", "Space Grotesk"),
-    };
+        var list = new List<FontChoice> { Inter() };
+        if (IsInstalled("Segoe UI Variable")) list.Add(System("Segoe UI Variable Text", "Segoe UI Variable"));
+        list.Add(Bundled("Geist.ttf", "Geist"));
+        list.Add(BundledStatic("Poppins"));
+        list.Add(Bundled("Figtree.ttf", "Figtree"));
+        list.Add(Bundled("DMSans.ttf", "DM Sans", "DM Sans 14pt"));
+        list.Add(Bundled("Manrope.ttf", "Manrope"));
+        list.Add(Bundled("PlusJakartaSans.ttf", "Plus Jakarta Sans"));
+        list.Add(Bundled("Outfit.ttf", "Outfit"));
+        list.Add(Bundled("SpaceGrotesk.ttf", "Space Grotesk"));
+        return list;
+    }
 
-    private static readonly (string family, string display, string probe)[] SystemCandidates =
-    {
-        ("Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI Variable"),
-        ("Segoe UI", "Segoe UI", "Segoe UI"),
-        ("Bahnschrift", "Bahnschrift", "Bahnschrift"),
-        ("Arial", "Arial", "Arial"),
-        ("Calibri", "Calibri", "Calibri"),
-        ("Verdana", "Verdana", "Verdana"),
-        ("Trebuchet MS", "Trebuchet MS", "Trebuchet MS"),
-    };
-
-    /// <summary>The curated system fonts that are actually installed on this PC.</summary>
-    public IReadOnlyList<FontChoice> SystemFonts => SystemCandidates
-        .Where(c => Installed.Any(i => i.StartsWith(c.probe, StringComparison.OrdinalIgnoreCase)))
-        .Select(c => System(c.family, c.display)).ToList();
-
-    /// <summary>Every font family installed on the PC (sorted, from DirectWrite through Win2D).</summary>
-    public IReadOnlyList<string> Installed => _installed ??= LoadInstalled();
-
-    private static List<string> LoadInstalled()
+    private static bool IsInstalled(string familyPrefix)
     {
         try
         {
             return Microsoft.Graphics.Canvas.Text.CanvasTextFormat.GetSystemFontFamilies()
-                .Where(f => !string.IsNullOrWhiteSpace(f) && !f.StartsWith("@", StringComparison.Ordinal))
-                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+                .Any(f => f.StartsWith(familyPrefix, StringComparison.OrdinalIgnoreCase));
         }
-        catch { return new List<string>(); }
+        catch { return false; }
     }
 
-    /// <summary>Installed families matching <paramref name="query"/>, as choices (at most <paramref name="max"/>).</summary>
-    public IReadOnlyList<FontChoice> SearchInstalled(string query, int max) => Installed
-        .Where(f => string.IsNullOrWhiteSpace(query) || f.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase))
-        .Where(f => !IsIconFont(f))
-        .Take(max).Select(f => new FontChoice("installed:" + f, f, FontGroup.Installed, f, f, f, f)).ToList();
-
-    private static bool IsIconFont(string f) =>
-        f.Contains("Icons", StringComparison.OrdinalIgnoreCase) || f.Contains("Symbol", StringComparison.OrdinalIgnoreCase) ||
-        f.Contains("MDL2", StringComparison.OrdinalIgnoreCase) || f.Contains("Webdings", StringComparison.OrdinalIgnoreCase) ||
-        f.Contains("Wingdings", StringComparison.OrdinalIgnoreCase) || f.Contains("Marlett", StringComparison.OrdinalIgnoreCase);
-
-    public FontChoice? Find(string? id)
-    {
-        if (string.IsNullOrEmpty(id)) return null;
-        var hit = BundledFonts.FirstOrDefault(f => f.Id == id) ?? SystemFonts.FirstOrDefault(f => f.Id == id);
-        if (hit != null) return hit;
-        if (id.StartsWith("installed:", StringComparison.Ordinal))
-        {
-            string family = id["installed:".Length..];
-            if (Installed.Contains(family, StringComparer.OrdinalIgnoreCase)) return new FontChoice(id, family, FontGroup.Installed, family, family, family, family);
-        }
-        return null;
-    }
+    public FontChoice? Find(string? id) => string.IsNullOrEmpty(id) ? null : Fonts.FirstOrDefault(f => f.Id == id);
 
     // ---- Applying ---------------------------------------------------------------------------------------
-    /// <summary>Applies the saved choice at start-up (before any view is built); unknown / uninstalled → default.</summary>
+    /// <summary>Applies the saved choice at start-up (before any view is built); a removed / uninstalled font → the default.</summary>
     public void ApplySaved()
     {
-        var choice = Find(_settings.Current.FontId) ?? BundledFonts[0];
+        var choice = Find(_settings.Current.FontId) ?? Fonts[0];
         SetTheme(choice);
     }
 
@@ -141,7 +117,7 @@ public sealed class FontService
         FontChanged?.Invoke(previous);
     }
 
-    public void ResetToDefault() => Apply(BundledFonts[0]);
+    public void ResetToDefault() => Apply(Fonts[0]);
 
     private void SetTheme(FontChoice choice)
     {

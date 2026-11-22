@@ -22,7 +22,7 @@ public sealed class NotchShape
     /// <summary>Shoulders are built at the largest radius and scaled down to the live one.</summary>
     private const float RB = (float)Theme.MaxCornerRadius;
     private readonly CompSpring _radius;
-    private readonly CompositionColorGradientStop _hl1, _hl2;
+    private ShapeVisual _dropGlowVisual = null!;
 
     public NotchShape(UIElement host, double hostWidth, double hostHeight)
     {
@@ -34,6 +34,7 @@ public sealed class NotchShape
         Props.InsertScalar("W", (float)Theme.CollapsedWidth);
         Props.InsertScalar("H", (float)Theme.CollapsedHeight);
         Props.InsertScalar("ShadowO", (float)Theme.ShadowOpacity);
+        Props.InsertScalar("Full", (float)Theme.ExpandedHeight); // the window keeps this at the current expanded height
         _radius = new CompSpring(Props, "R", Motion.Notch, Theme.CornerRadius);
 
         // Body: a path with continuous ("squircle") bottom corners, its top pushed up above the screen
@@ -46,14 +47,17 @@ public sealed class NotchShape
         var root = c.CreateContainerVisual();
         root.Size = size;
 
-        // Soft shadow: cast by a sprite whose mask is a live surface of the body + shoulders.
-        // (A LayerVisual shadow renders unscaled inside XAML, so it isn't used.)
-        var shadow = c.CreateDropShadow();
-        shadow.BlurRadius = (float)Theme.ShadowBlur;
-        shadow.Offset = new Vector3(0, (float)Theme.ShadowOffsetY, 0);
-        shadow.Color = Color.FromArgb(255, 0, 0, 0);
+        // Soft shadow: a pre-rendered blurred rounded rectangle (SoftShadow, drawn once) stretched by a nine-grid
+        // brush to the body's live size through expressions. It used to be a drop shadow masked by a live surface
+        // of the body, which re-rendered that surface and re-blurred it on every frame of every morph: the single
+        // most expensive thing the compositor did while the notch moved. Now a morph only resizes a sprite.
+        var caster = _shadowCaster = SoftShadow.Create(c, Theme.CornerRadius, ShadowSoftness, 1, Theme.ShadowOffsetY);
+        caster.Properties.TryGetScalar("Margin", out float margin);
+        var size0 = Expr(FormattableString.Invariant($"Vector2(N.W + {2 * margin}, N.H + {RB} + {2 * margin})"));
+        caster.StartAnimation("Size", size0);
+        caster.StartAnimation("Offset", Expr(FormattableString.Invariant($"Vector3((HW - N.W) / 2 - {margin}, -{RB} - {margin} + {Theme.ShadowOffsetY}, 0)")));
         // No shadow for the 6px minimal notch (it would read as a smudge).
-        shadow.StartAnimation("Opacity", Expr(FormattableString.Invariant($"N.H > {Theme.MinimalHeight + 1} ? N.ShadowO : 0")));
+        caster.StartAnimation("Opacity", Expr(FormattableString.Invariant($"N.H > {Theme.MinimalHeight + 1} ? N.ShadowO : 0")));
 
         var fill = c.CreateShapeVisual();
         fill.Size = size;
@@ -66,45 +70,47 @@ public sealed class NotchShape
         bodyGroup.Children.InsertAtTop(Shoulder(left: true));
         bodyGroup.Children.InsertAtTop(Shoulder(left: false));
 
-        var surface = c.CreateVisualSurface();
-        surface.SourceVisual = bodyGroup;
-        surface.SourceSize = size;
-        shadow.Mask = c.CreateSurfaceBrush(surface);
-        var caster = c.CreateSpriteVisual();
-        caster.Size = size;
-        caster.Shadow = shadow;
-        root.Children.InsertAtTop(caster);
+        // The shadow is not part of this tree: the notch window is clipped to its body by a window region (so
+        // only the notch takes clicks), and that region cut the shadow off along the bottom edge. It's handed out
+        // as Shadow and drawn by NotchShadowWindow, a click-through window right under the notch.
+        Shadow = c.CreateContainerVisual();
+        Shadow.Size = size;
+        Shadow.Children.InsertAtTop(caster);
         root.Children.InsertAtTop(bodyGroup);
 
-        // Inner highlight: a 2px stroke clipped to the body = 1px inside the edge, fading in from the top.
-        var highlight = c.CreateShapeVisual();
-        highlight.Size = size;
-        var gradient = c.CreateLinearGradientBrush();
-        gradient.MappingMode = CompositionMappingMode.Absolute;
-        gradient.ColorStops.Add(c.CreateColorGradientStop(0, Color.FromArgb(0, 255, 255, 255)));
+        // Inner highlight: a thin white line just inside the sides and bottom, fading in from the top (the top
+        // edge stays pure black). One unclipped stroke along a baked inset edge path, instead of a double-width
+        // stroke clipped to the animated body (a per-frame path clip).
+        Edge = c.CreatePathGeometry();
+        Edge.Path = EdgePath(Theme.CollapsedWidth, Theme.CollapsedHeight, Theme.CornerRadius, EdgeInset);
+        var edgeVisual = c.CreateShapeVisual();
+        edgeVisual.Size = size;
+        var edgeBrush = c.CreateLinearGradientBrush();
+        edgeBrush.MappingMode = CompositionMappingMode.Absolute;
+        edgeBrush.StartPoint = Vector2.Zero;
+        edgeBrush.StartAnimation("EndPoint", Expr("Vector2(0, Max(1, N.H))"));
+        edgeBrush.ColorStops.Add(c.CreateColorGradientStop(0, Color.FromArgb(0, 255, 255, 255)));
         _hl1 = c.CreateColorGradientStop(0.55f, Theme.HighlightColor);
-        gradient.ColorStops.Add(_hl1);
         _hl2 = c.CreateColorGradientStop(1, Theme.HighlightColor);
-        gradient.ColorStops.Add(_hl2);
-        gradient.StartPoint = Vector2.Zero;
-        gradient.StartAnimation("EndPoint", Expr("Vector2(0, Max(1, N.H))"));
-        var outline = c.CreateSpriteShape(Body);
-        outline.StrokeBrush = gradient;
-        outline.StrokeThickness = 2;
-        highlight.Shapes.Add(outline);
-        highlight.Clip = c.CreateGeometricClip(Body);
-        root.Children.InsertAtTop(highlight);
+        edgeBrush.ColorStops.Add(_hl1);
+        edgeBrush.ColorStops.Add(_hl2);
+        var edgeLine = c.CreateSpriteShape(Edge);
+        edgeLine.StrokeBrush = edgeBrush;
+        edgeLine.StrokeThickness = (float)(2 * EdgeInset); // covers exactly the band from the body edge inward
+        edgeVisual.Shapes.Add(edgeLine);
+        root.Children.InsertAtTop(edgeVisual);
 
-        // Drop-target glow: a brighter 4px stroke clipped to the body (2px inside), shown while files hover.
+        // Drop-target glow: a brighter stroke along the same edge, shown while files hover over the notch.
+        // Hidden (not just transparent) when unused, so it costs nothing outside a drag.
         Props.InsertScalar("Glow", 0);
-        var glow = c.CreateShapeVisual();
+        var glow = _dropGlowVisual = c.CreateShapeVisual();
         glow.Size = size;
-        var glowLine = c.CreateSpriteShape(Body);
+        var glowLine = c.CreateSpriteShape(Edge);
         glowLine.StrokeBrush = c.CreateColorBrush(Theme.DropHighlightColor);
-        glowLine.StrokeThickness = 4;
+        glowLine.StrokeThickness = (float)(2 * EdgeInset);
         glow.Shapes.Add(glowLine);
-        glow.Clip = c.CreateGeometricClip(Body);
         glow.StartAnimation("Opacity", Expr("Clamp(N.Glow, 0, 1)"));
+        glow.IsVisible = false;
         root.Children.InsertAtTop(glow);
 
         ElementCompositionPreview.SetElementChildVisual(host, root);
@@ -143,6 +149,9 @@ public sealed class NotchShape
 
     public Compositor Compositor { get; }
 
+    /// <summary>The soft shadow (host coordinates, same size as the host), for <see cref="NotchShadowWindow"/>.</summary>
+    public ContainerVisual Shadow { get; }
+
     /// <summary>"W" and "H": the notch body size in DIPs (animated by the window's springs).</summary>
     public CompositionPropertySet Props { get; }
 
@@ -175,6 +184,8 @@ public sealed class NotchShape
     {
         if (animate) _radius.SetTarget(r, Motion.Notch); else _radius.Snap(r);
         if (!animate) Rebake();
+        // The pre-rendered shadow takes the new corner (one small cached texture per radius).
+        _shadowCaster.Brush = SoftShadow.Create(Compositor, r, ShadowSoftness, 1, Theme.ShadowOffsetY).Brush;
     }
 
     /// <summary>Border highlight colour and shadow strength (Settings ▸ Customisation ▸ Notch look).</summary>
@@ -184,7 +195,47 @@ public sealed class NotchShape
         Props.InsertScalar("ShadowO", (float)shadowOpacity);
     }
 
+    /// <summary>Blur of the pre-rendered shadow (about the old drop shadow's spread).</summary>
+    private const double ShadowSoftness = 12;
+    private readonly SpriteVisual _shadowCaster = null!;
+    private readonly CompositionColorGradientStop _hl1 = null!, _hl2 = null!;
+
+    /// <summary>Show / hide the drop-target glow (visible from the start of a drag; hidden once it has faded out).</summary>
+    public void SetDropGlow(bool on)
+    {
+        _dropGlowHide?.Stop();
+        if (on) { _dropGlowVisual.IsVisible = true; return; }
+        _dropGlowHide ??= Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+        _dropGlowHide.IsRepeating = false;
+        _dropGlowHide.Interval = TimeSpan.FromMilliseconds(600);
+        _dropGlowHide.Tick += HideGlow;
+        _dropGlowHide.Start();
+        void HideGlow(Microsoft.UI.Dispatching.DispatcherQueueTimer t, object o) { t.Tick -= HideGlow; t.Stop(); _dropGlowVisual.IsVisible = false; }
+    }
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dropGlowHide;
+
+    /// <summary>The highlight / rim / drop-glow band: the edge path sits this far inside the body outline and is stroked 2× as wide.</summary>
+    private const double EdgeInset = 0.5; // a 1px band, as the original highlight
+
+    /// <summary>The inset edge (sides + bottom) that the highlight, rim and drop glow are stroked along; follows the body.</summary>
+    public CompositionPathGeometry Edge { get; } = null!;
+
+    private bool _rebakeQueued;
+
+    /// <summary>
+    /// Width, height and radius springs often retarget together (one state change = two or three Changed
+    /// events): the bake runs once, right after them, instead of once per spring.
+    /// </summary>
     private void Rebake()
+    {
+        if (_rebakeQueued) return;
+        var q = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        if (q == null) { RebakeNow(); return; }
+        _rebakeQueued = true;
+        q.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.High, () => { _rebakeQueued = false; RebakeNow(); });
+    }
+
+    private void RebakeNow()
     {
         if (_w == null || _h == null) return;
         var wm = _w.Model;
@@ -195,19 +246,26 @@ public sealed class NotchShape
         if (!Anim.Enabled || duration <= 0.001)
         {
             Body.StopAnimation("Path");
-            Body.Path = BodyPath(wm.ValueAt(now), hm.ValueAt(now), rm.ValueAt(now));
+            Edge.StopAnimation("Path");
+            double w = wm.ValueAt(now), h = hm.ValueAt(now), r = rm.ValueAt(now);
+            Body.Path = BodyPath(w, h, r);
+            Edge.Path = EdgePath(w, h, r, EdgeInset);
             return;
         }
-        var a = Compositor.CreatePathKeyFrameAnimation();
+        var body = Compositor.CreatePathKeyFrameAnimation();
+        var edge = Compositor.CreatePathKeyFrameAnimation();
         var linear = Compositor.CreateLinearEasingFunction();
         int n = Math.Clamp((int)Math.Ceiling(duration * PathKeysPerSecond), 2, 400);
         for (int i = 0; i <= n; i++)
         {
             double t = now + duration * i / n;
-            a.InsertKeyFrame((float)i / n, BodyPath(wm.ValueAt(t), hm.ValueAt(t), rm.ValueAt(t)), linear);
+            double w = wm.ValueAt(t), h = hm.ValueAt(t), r = rm.ValueAt(t);
+            body.InsertKeyFrame((float)i / n, BodyPath(w, h, r), linear);
+            edge.InsertKeyFrame((float)i / n, EdgePath(w, h, r, EdgeInset), linear);
         }
-        a.Duration = TimeSpan.FromSeconds(duration);
-        Body.StartAnimation("Path", a);
+        body.Duration = edge.Duration = TimeSpan.FromSeconds(duration);
+        Body.StartAnimation("Path", body);
+        Edge.StartAnimation("Path", edge);
     }
 
     /// <summary>
@@ -234,6 +292,32 @@ public sealed class NotchShape
         b.AddCubicBezier(P(x1 - d, h), P(x1, h - d), P(x1, h - l));
         b.AddLine(P(x1, top));
         b.EndFigure(Microsoft.Graphics.Canvas.Geometry.CanvasFigureLoop.Closed);
+        return new CompositionPath(Microsoft.Graphics.Canvas.Geometry.CanvasGeometry.CreatePath(b));
+    }
+
+    /// <summary>
+    /// The body outline pulled in by <paramref name="inset"/> on the sides and bottom, as an open figure (no top
+    /// edge): the same continuous corners with the radius reduced by the inset, so a stroke along it sits
+    /// evenly inside the body. Same command sequence every time, so outlines interpolate cleanly.
+    /// </summary>
+    private CompositionPath EdgePath(double w, double h, double radius, double inset)
+    {
+        w = Math.Max(0, w);
+        h = Math.Max(0, h);
+        double x0 = (_hostWidth - w) / 2 + inset, x1 = (_hostWidth + w) / 2 - inset, top = -Theme.MaxCornerRadius;
+        double bottom = Math.Max(0, h - inset), iw = Math.Max(0, x1 - x0);
+        double r = Math.Min(Math.Max(0, Math.Min(radius, Math.Min(h / 2, w / 2)) - inset), Math.Min(bottom / 2, iw / 2));
+        double l = Math.Max(0, Math.Min(r * (1 + Theme.CornerSmoothing), Math.Min(bottom, iw / 2)));
+        double d = l * 0.22;
+        Vector2 P(double x, double y) => new((float)x, (float)y);
+        using var b = new Microsoft.Graphics.Canvas.Geometry.CanvasPathBuilder(Microsoft.Graphics.Canvas.CanvasDevice.GetSharedDevice());
+        b.BeginFigure(P(x0, top), Microsoft.Graphics.Canvas.Geometry.CanvasFigureFill.DoesNotAffectFills);
+        b.AddLine(P(x0, bottom - l));
+        b.AddCubicBezier(P(x0, bottom - d), P(x0 + d, bottom), P(x0 + l, bottom));
+        b.AddLine(P(x1 - l, bottom));
+        b.AddCubicBezier(P(x1 - d, bottom), P(x1, bottom - d), P(x1, bottom - l));
+        b.AddLine(P(x1, top));
+        b.EndFigure(Microsoft.Graphics.Canvas.Geometry.CanvasFigureLoop.Open);
         return new CompositionPath(Microsoft.Graphics.Canvas.Geometry.CanvasGeometry.CreatePath(b));
     }
 

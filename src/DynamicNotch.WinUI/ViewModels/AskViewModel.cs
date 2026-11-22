@@ -210,7 +210,6 @@ public sealed class AskViewModel : ObservableObject
         turn?.Start();
         Flush();
         IsBusy = true;
-        SoundCue?.Invoke("asksent");
         State = AskState.Thinking;
 
         var snapshot = _history.ToList();
@@ -233,7 +232,6 @@ public sealed class AskViewModel : ObservableObject
             Flush();
             _history.Add(new ChatMessage("assistant", _answer.ToString()));
             turn?.Finish();
-            SoundCue?.Invoke("askdone");
             State = AskState.Answer;
         }
         catch (OperationCanceledException)
@@ -244,13 +242,11 @@ public sealed class AskViewModel : ObservableObject
         {
             if (cts.IsCancellationRequested) return;
             ShowError(turn, ex.Kind, ex.Message);
-            SoundCue?.Invoke("error");
         }
         catch (Exception)
         {
             if (cts.IsCancellationRequested) return;
             ShowError(turn, ClaudeErrorKind.Other, "Something went wrong talking to Claude. Try again.");
-            SoundCue?.Invoke("error");
         }
         finally
         {
@@ -335,8 +331,6 @@ public sealed class AskViewModel : ObservableObject
 
     /// <summary>Raised after Copy so the view can show a quick confirmation.</summary>
     public event Action? CopiedFlash;
-    /// <summary>"asksent", "askdone" or "error" (the notch sound for it plays if enabled).</summary>
-    public event Action<string>? SoundCue;
 }
 
 public enum TurnState { Thinking, Streaming, Done, Error }

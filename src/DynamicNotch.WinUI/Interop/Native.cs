@@ -12,6 +12,7 @@ internal static class Native
     public const int WS_EX_NOACTIVATE = 0x08000000;
     public const int WS_EX_TOPMOST = 0x00000008;
     public const int WS_EX_APPWINDOW = 0x00040000;
+    public const int WS_EX_LAYERED = 0x00080000, WS_EX_TRANSPARENT = 0x00000020;
 
     public static readonly IntPtr HWND_TOPMOST = new(-1);
     public const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010,
@@ -36,6 +37,22 @@ internal static class Native
     [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint vk);
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+    [DllImport("user32.dll")] private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
+
+    /// <summary>
+    /// Makes a window ignore the mouse completely (clicks and hovers go to whatever is under it), while it
+    /// still draws normally: layered (fully opaque, so the content's own per-pixel alpha is what shows) + transparent.
+    /// </summary>
+    public static void MakeClickThrough(IntPtr hwnd)
+    {
+        SetExStyle(hwnd, WS_EX_LAYERED | WS_EX_TRANSPARENT, 0);
+        SetLayeredWindowAttributes(hwnd, 0, 255, 0x2 /* LWA_ALPHA */);
+    }
+
+    /// <summary>Puts <paramref name="hwnd"/> directly under <paramref name="above"/> in the z-order (both stay topmost), without activating it.</summary>
+    public static void PlaceBelow(IntPtr hwnd, IntPtr above, int x, int y, int w, int h, bool move) =>
+        SetWindowPos(hwnd, above, x, y, w, h, SWP_NOACTIVATE | (move ? 0 : SWP_NOMOVE | SWP_NOSIZE));
+
     public static void SetExStyle(IntPtr hwnd, int add, int remove)
     {
         long style = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
@@ -43,16 +60,10 @@ internal static class Native
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style));
     }
 
-    // ---- Dragging a borderless window by its content ----------------------------------------------------
+    // ---- Resizing a borderless window from a grip ----------------------------------------------------
+    // (Moving the Settings window uses a native caption region instead: see SettingsWindow.UpdateDragRegions.)
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
-
-    /// <summary>Starts a system move of the window, as if its title bar had been pressed.</summary>
-    public static void BeginWindowDrag(IntPtr hwnd)
-    {
-        ReleaseCapture();
-        SendMessage(hwnd, 0x00A1 /* WM_NCLBUTTONDOWN */, new IntPtr(2) /* HTCAPTION */, IntPtr.Zero);
-    }
 
     /// <summary>Starts a system resize from the bottom-right corner (the Settings window's grip).</summary>
     public static void BeginWindowResize(IntPtr hwnd)

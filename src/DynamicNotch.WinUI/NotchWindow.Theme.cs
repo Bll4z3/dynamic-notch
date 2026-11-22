@@ -8,7 +8,7 @@ namespace DynamicNotch;
 /// <summary>
 /// Live customisation on the notch (ThemeService): radius (the shape springs, the window region and hover
 /// targets follow), border highlight and shadow, the album glow (on / intensity / colour source), the
-/// collapsed visualiser style, notch scale / top offset / monitor, the collapsed notch's items and the
+/// collapsed visualiser style, notch scale / monitor, the collapsed notch's items and the
 /// hover timings. Accent and tile radii reach the views through Theme's shared brushes and the radius walk.
 /// </summary>
 public sealed partial class NotchWindow
@@ -35,7 +35,10 @@ public sealed partial class NotchWindow
             UpdateHitArea();
             UpdateRegion();
         }
-        if (parts.HasFlag(ThemeService.Part.Surface)) _shape.SetSurface(Theme.HighlightColor, Theme.ShadowOpacity);
+        if (parts.HasFlag(ThemeService.Part.Surface))
+        {
+            _shape.SetSurface(Theme.HighlightColor, Theme.ShadowOpacity);
+        }
         if (parts.HasFlag(ThemeService.Part.Glow) || parts.HasFlag(ThemeService.Part.Accent))
         {
             UpdateGlowColor(animate);
@@ -44,6 +47,7 @@ public sealed partial class NotchWindow
         if (parts.HasFlag(ThemeService.Part.Visualizer))
         {
             Bars.Style = s.Visualizer;
+            Bars.Colorful = s.VisualizerColor == "accent";
             UpdateState();
         }
         if (parts.HasFlag(ThemeService.Part.Layout)) PositionWindow();
@@ -55,12 +59,15 @@ public sealed partial class NotchWindow
             StatusViewModel.ShowDateCollapsed = s.ShowDate;
             Vm.Status.Refresh();
         }
-        if (parts.HasFlag(ThemeService.Part.Behaviour))
-        {
-            _expandTimer.Interval = TimeSpan.FromMilliseconds(s.HoverDelayMs);
-            _collapseTimer.Interval = TimeSpan.FromMilliseconds(s.CollapseDelayMs);
-        }
+        // Hover timings (Settings ▸ Customisation ▸ Behaviour) are read each time a timer starts
+        // (HoverDelayMs / CollapseDelayMs below), so a change applies from the very next hover.
     }
+
+    /// <summary>How long the pointer rests on the notch before it opens (the user's setting).</summary>
+    private double HoverDelayMs => _theme?.Current.HoverDelayMs ?? Motion.HoverExpandDelayMs;
+
+    /// <summary>How long the notch stays open after the pointer leaves (the user's setting).</summary>
+    private double CollapseDelayMs => _theme?.Current.CollapseDelayMs ?? Motion.HoverCollapseDelayMs;
 
     /// <summary>Glow brightness scaled by the Notch look settings (0 when the glow is off).</summary>
     private double GlowScale => _theme is { } t ? (t.Current.GlowEnabled ? t.Current.GlowIntensity : 0) : 1;
@@ -71,7 +78,6 @@ public sealed partial class NotchWindow
 
     /// <summary>The scale the notch is drawn at (Settings ▸ Customisation ▸ Notch look).</summary>
     private double NotchScale => _theme?.Current.NotchScale ?? 1;
-    private double TopOffset => _theme?.Current.TopOffset ?? 0;
     private bool UseMouseMonitor => _theme?.Current.Monitor == "mouse";
 
     private void ApplyNotchScale()

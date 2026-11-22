@@ -55,6 +55,16 @@ public sealed partial class NotchWindow : Window
 
     private readonly DispatcherQueueTimer _expandTimer, _collapseTimer, _revealTimer, _regionTimer, _hoverWatch;
 
+    /// <summary>Draws the notch's shadow, click-through, right under this window (see NotchShadowWindow for why).</summary>
+    private Views.NotchShadowWindow? _shadowWindow;
+
+    /// <summary>Back on top of other topmost windows, with the shadow window directly underneath.</summary>
+    private void ReassertTopmost()
+    {
+        Native.ReassertTopmost(_hwnd);
+        _shadowWindow?.KeepBelow(_hwnd);
+    }
+
     public NotchWindow(MainViewModel vm)
     {
         Vm = vm;
@@ -74,12 +84,15 @@ public sealed partial class NotchWindow : Window
         SetUpWindow();
         ApplyThemeLayout();
         BuildComposition();
+        _shadowWindow = new Views.NotchShadowWindow(_shape.Shadow, Anim.VisualOf(Root), Theme.HostWidth, Theme.HostHeight);
         BuildExpanded();
         BuildClipboard();
         BuildAsk();
         BuildFocus();
         BuildActivity();
         BuildHub();
+        BuildScreenshots();
+        BuildOverlays();
         UpdateGlowColor(animate: false);
         // Any click on the notch pins it, including clicks that a button inside it handles.
         NotchRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Notch_PointerPressed), handledEventsToo: true);
@@ -133,7 +146,7 @@ public sealed partial class NotchWindow : Window
         _messages.Message += OnMessage;
 
         // Re-assert topmost whenever another window (e.g. a full-screen app) comes to the front.
-        _foregroundHook = (_, _, _, _, _, _, _) => Native.ReassertTopmost(_hwnd);
+        _foregroundHook = (_, _, _, _, _, _, _) => ReassertTopmost();
         _foregroundHookHandle = Native.SetWinEventHook(Native.EVENT_SYSTEM_FOREGROUND, Native.EVENT_SYSTEM_FOREGROUND,
             IntPtr.Zero, _foregroundHook, 0, 0, Native.WINEVENT_OUTOFCONTEXT);
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
@@ -147,8 +160,10 @@ public sealed partial class NotchWindow : Window
         ApplyTargets(immediate: true);
         AppWindow.Show(activateWindow: false);
         Native.MakeSeeThroughPopup(_hwnd); // again: showing re-applies the presenter frame
-        Native.ReassertTopmost(_hwnd);
+        ReassertTopmost();
+        _shadowWindow?.Show(_hwnd);
         UpdateHotkey();
+        UpdatePaletteHotkey();
     }
 
     public void CloseNotch()
@@ -158,8 +173,12 @@ public sealed partial class NotchWindow : Window
         _foregroundHookHandle = IntPtr.Zero;
         if (_hotkeyRegistered && _messages != null) Native.UnregisterHotKey(_messages.Handle, AskHotkeyId);
         _hotkeyRegistered = false;
+        if (_paletteHotkeyRegistered && _messages != null) Native.UnregisterHotKey(_messages.Handle, PaletteHotkeyId);
+        _paletteHotkeyRegistered = false;
         _messages?.Dispose();
         _messages = null;
+        _shadowWindow?.Close();
+        _shadowWindow = null;
         Close();
     }
 
@@ -167,7 +186,7 @@ public sealed partial class NotchWindow : Window
 
     /// <summary>
     /// Top-centre of the chosen monitor (primary, or the one under the pointer), in physical pixels
-    /// (DPI-correct on any monitor setup), pushed down by the top offset and drawn at the notch scale:
+    /// (DPI-correct on any monitor setup), flush with the top edge and drawn at the notch scale:
     /// the window grows by the scale and the content is scaled by a render transform, so every DIP→pixel
     /// conversion (region, hit tests, key capture) goes through <see cref="_scale"/> and stays exact.
     /// </summary>
@@ -180,8 +199,9 @@ public sealed partial class NotchWindow : Window
         int w = (int)Math.Round(Theme.HostWidth * scale);
         int h = (int)Math.Round(Theme.HostHeight * scale);
         _winLeft = bounds.Left + (bounds.Width - w) / 2;
-        _winTop = bounds.Top + (int)Math.Round(TopOffset * monitorScale);
+        _winTop = bounds.Top; // always flush with the top edge of the screen
         Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, _winLeft, _winTop, w, h, Native.SWP_NOACTIVATE);
+        _shadowWindow?.Place(_hwnd, _winLeft, _winTop, w, h, NotchScale);
         UpdateRegion();
     }
 
@@ -198,6 +218,9 @@ public sealed partial class NotchWindow : Window
                 break;
             case Native.WM_HOTKEY when wParam.ToInt32() == AskHotkeyId:
                 Ui.Post(OnAskHotkey);
+                break;
+            case Native.WM_HOTKEY when wParam.ToInt32() == PaletteHotkeyId:
+                Ui.Post(OnPaletteHotkey);
                 break;
         }
     }
@@ -329,15 +352,15 @@ public sealed partial class NotchWindow : Window
         // Pills wait while the notch is open or an activity pill is up; they resume (with a fresh timer) after.
         Vm.HoldPill(next is NotchState.Expanded or NotchState.Activity || _hint);
         if (next == NotchState.Expanded && Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
-        if (next == NotchState.Expanded && Vm.CurrentPage == PageId.Hub) _frame.Hub.OnShown();
         // An activity pill that ended under the pointer: carry on as a normal hover (open after the usual delay).
-        if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; Restart(_expandTimer, Motion.HoverExpandDelayMs); }
+        if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; Restart(_expandTimer, HoverDelayMs); }
         if (prev == NotchState.Expanded && next != NotchState.Expanded)
         {
             Unpin();
             _frame.Shelf.ClosePreview();
             _frame.Preview.SetShown(false);
-            _frame.Hub.ClosePopover();
+            _frame.Popup.CloseAll();
+            ResetOverlayOnCollapse();
             if (!_selecting)
             {
                 Vm.Ask.CancelIfBusy();     // collapsing with a request in flight cancels it
@@ -348,9 +371,9 @@ public sealed partial class NotchWindow : Window
     }
 
     /// <summary>Expanded size for the current page: Ask sizes itself to its state and content.</summary>
-    private (double Width, double Height) ExpandedTarget() => Vm.IsAskPage
-        ? _frame.Ask.DesiredNotchSize
-        : (Theme.ExpandedWidth, Vm.IsMusicPage ? Theme.MusicExpandedHeight : Theme.ExpandedHeight);
+    private (double Width, double Height) ExpandedTarget() => Vm.IsAskPage ? _frame.Ask.DesiredNotchSize
+        : Vm.IsPaletteOpen ? _frame.Palette.DesiredNotchSize
+        : (Theme.ExpandedWidth, Vm.IsMusicPage && !_frame.Popup.IsOpen ? Theme.MusicExpandedHeight : Theme.ExpandedHeight);
 
     private void ApplyTargets(bool immediate = false)
     {
@@ -368,7 +391,7 @@ public sealed partial class NotchWindow : Window
         {
             case NotchState.Expanded:
                 (w, h) = expanded;
-                if (Vm.IsAskPage && _expandedRevealed) preset = Motion.AskResize;
+                if ((Vm.IsAskPage || Vm.IsPaletteOpen) && _expandedRevealed) preset = Motion.AskResize;
                 break;
             case NotchState.Pill:
                 w = Theme.PillWidth; h = Theme.PillHeight; preset = Motion.Pop; // pop with a little overshoot
@@ -383,6 +406,14 @@ public sealed partial class NotchWindow : Window
         }
 
         if (immediate) { _width.Snap(w); _height.Snap(h); }
+        else if (preset == Motion.Notch && (h != _height.Target || w != _width.Target))
+        {
+            // Fluid morph: opening, the width leads and the height follows (the island spreads, then drops);
+            // closing, the height leads (it lifts, then draws in). Same springs, a few dozen ms apart in feel.
+            bool opening = h > _height.Target + 0.5;
+            _width.SetTarget(w, opening ? Motion.NotchLead : Motion.Notch);
+            _height.SetTarget(h, opening ? Motion.Notch : Motion.NotchLead);
+        }
         else { _width.SetTarget(w, preset); _height.SetTarget(h, preset); }
 
         // Content leaving the stage fades out right away (faster than it arrives); incoming content
@@ -403,10 +434,10 @@ public sealed partial class NotchWindow : Window
         PillLayer.IsHitTestVisible = _state == NotchState.Pill && !_hint;
         ActivityLayer.IsHitTestVisible = _state == NotchState.Activity;
         UpdateCompactActivity();
-        _frame.SetAskActive(_state == NotchState.Expanded && Vm.IsAskPage);
+        _frame.SetSurfaces(_state == NotchState.Expanded && Vm.IsAskPage, _state == NotchState.Expanded && Vm.IsPaletteOpen);
 
         Bars.IsPlaying = _state == NotchState.Collapsed && playing && !minimal && !timer;
-        _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage);
+        _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage, Vm.Music.IsPlaying);
         Vm.Music.IsVisible = _state == NotchState.Expanded && Vm.IsMusicPage;
         Vm.Usage.IsVisible = _state == NotchState.Expanded && Vm.CurrentPage == PageId.Usage;
         UpdateCompactTimer();
@@ -491,10 +522,10 @@ public sealed partial class NotchWindow : Window
         double maxH = Math.Max(th, _height.Model.MaxFrom(now));
 
         var rects = new List<Native.RECT>();
-        // Body + shoulders at the largest size still to come, plus room for the shadow once it's bigger than a bar.
+        // Body + shoulders at the largest size still to come. (The shadow is drawn by the click-through shadow
+        // window, so no room is kept for it here: the region is also where this window takes the mouse.)
         double s = Math.Min(Theme.CornerRadius, maxH / 2);
-        double shadow = maxH > Theme.CollapsedHeight + 1 ? Theme.ShadowMargin : 0;
-        rects.Add(Centered(maxW + 2 * s + 2 * shadow, maxH + shadow));
+        rects.Add(Centered(maxW + 2 * s, maxH));
         // Hover strip along the top edge.
         rects.Add(Centered(HitStrip.Width, Theme.HoverStripHeight));
         Native.SetRegion(_hwnd, rects);
@@ -535,10 +566,15 @@ public sealed partial class NotchWindow : Window
                 if (Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
                 else _frame.Shelf.ClosePreview();
                 if (!Vm.IsAskPage) _frame.Preview.SetShown(false);
-                if (!Vm.IsAskPage && _hasFocus) ReleaseFocus(restore: true); // no text boxes on the other pages
+                if (!Vm.IsAskPage && !Vm.IsPaletteOpen && _hasFocus) ReleaseFocus(restore: true); // no text boxes on the other pages
                 Vm.Music.IsVisible = _state == NotchState.Expanded && Vm.IsMusicPage;
-                if (_state == NotchState.Expanded && Vm.CurrentPage == PageId.Hub) _frame.Hub.OnShown();
-                if (Vm.CurrentPage != PageId.Hub) _frame.Hub.ClosePopover();
+                _frame.Popup.CloseAll(); // the pop-up belongs to the header of the page you were on
+                if (Vm.Overlay != NotchOverlay.None) SetOverlay(NotchOverlay.None);
+                if (_state == NotchState.Expanded) _frame.OnPageShown(Vm.CurrentPage);
+                // The palette as a page: a fresh box when you arrive, its glow fading when you leave.
+                if (Vm.CurrentPage == PageId.Palette) _frame.Palette.Reset(focus: false);
+                else if (Vm.Overlay != NotchOverlay.Palette) { _frame.Palette.Hidden(); Vm.Palette.Closed(); }
+                if (Vm.CurrentPage == PageId.Screenshots) _frame.Screenshots.OnShown();
                 ApplyTargets(); // the notch height differs per page
                 break;
             case nameof(MainViewModel.CurrentPill):
@@ -563,11 +599,6 @@ public sealed partial class NotchWindow : Window
 
     private void OnPagesReconfigured(double from, bool currentRemoved)
     {
-        if (!Vm.Pages.IsEnabled(PageId.Ask))
-        {
-            Vm.Ask.CancelIfBusy();
-            if (_hasFocus) ReleaseFocus(restore: true);
-        }
         _frame.SetPages();
         ApplyDropTarget();
         _page.Snap(from); // same visual spot in the new layout; PageIndex then springs on from here
@@ -624,7 +655,7 @@ public sealed partial class NotchWindow : Window
             return;
         }
         if (OnActivityPointerEntered()) return; // hovering an activity pill holds it instead of opening the notch
-        if (!_hover) Restart(_expandTimer, Motion.HoverExpandDelayMs);
+        if (!_hover) Restart(_expandTimer, HoverDelayMs);
     }
 
     private void Notch_PointerExited(object sender, PointerRoutedEventArgs e) => OnPointerLeft();
@@ -661,7 +692,7 @@ public sealed partial class NotchWindow : Window
         e.Handled = true;
     }
 
-    private void ScheduleCollapseCheck() => Restart(_collapseTimer, Motion.HoverCollapseDelayMs);
+    private void ScheduleCollapseCheck() => Restart(_collapseTimer, CollapseDelayMs);
 
     private void OnCollapseTimer()
     {
@@ -751,7 +782,7 @@ public sealed partial class NotchWindow : Window
     private void UpdateHotkey()
     {
         if (_messages == null) return;
-        bool want = Vm.Pages.IsEnabled(PageId.Ask);
+        bool want = true; // Ask is always available (its header icon can be hidden, the hotkey stays)
         if (want && !_hotkeyRegistered)
         {
             _hotkeyRegistered = Native.RegisterHotKey(_messages.Handle, AskHotkeyId, AppConfig.AskHotkeyModifiers, AppConfig.AskHotkeyVirtualKey);

@@ -5,6 +5,9 @@ using DynamicNotch.Services;
 
 namespace DynamicNotch.ViewModels;
 
+/// <summary>What slides in over the notch's pages: nothing, Ask Claude or the command palette.</summary>
+public enum NotchOverlay { None, Ask, Palette }
+
 public sealed class MainViewModel : ObservableObject
 {
     private readonly SettingsService _settings;
@@ -64,6 +67,16 @@ public sealed class MainViewModel : ObservableObject
     public ActivityViewModel Activity { get; }
     /// <summary>Notifications + quick actions page.</summary>
     public HubViewModel Hub { get; }
+    /// <summary>App settings (the header icons read their order from here).</summary>
+    public SettingsService Settings => _settings;
+    /// <summary>The command palette's brain.</summary>
+    public CommandPaletteViewModel Palette { get; init; } = null!;
+    /// <summary>The palette's quick timer / stopwatch (shown on the collapsed notch while it runs).</summary>
+    public QuickTimerViewModel QuickTimer { get; init; } = null!;
+    /// <summary>The media player's Spotify Like button.</summary>
+    public SpotifyLikeViewModel SpotifyLike { get; init; } = null!;
+    /// <summary>The screenshot shelf (the Screenshots page).</summary>
+    public ScreenshotShelfViewModel Screenshots { get; init; } = null!;
 
     public ICommand OpenSettingsCommand { get; }
     /// <summary>The app opens the (single) Settings window.</summary>
@@ -93,9 +106,28 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public PageId CurrentPage => Pages.Enabled.Count > 0 ? Pages.Enabled[Math.Clamp(PageIndex, 0, Pages.Enabled.Count - 1)] : PageId.Music;
-    public bool IsMusicPage => CurrentPage == PageId.Music;
-    public bool IsShelfPage => CurrentPage == PageId.Clipboard;
-    public bool IsAskPage => CurrentPage == PageId.Ask;
+    public bool IsMusicPage => _overlay == NotchOverlay.None && CurrentPage == PageId.Music;
+    public bool IsShelfPage => _overlay == NotchOverlay.None && CurrentPage == PageId.Clipboard;
+
+    // ---- Overlays: Ask Claude and the command palette slide in over the pages (opened from the header) ----
+    private NotchOverlay _overlay;
+    /// <summary>What covers the pages right now (None = the pages themselves).</summary>
+    public NotchOverlay Overlay
+    {
+        get => _overlay;
+        set
+        {
+            if (!Set(ref _overlay, value)) return;
+            OnPropertyChanged(nameof(IsAskPage));
+            OnPropertyChanged(nameof(IsPaletteOpen));
+            OnPropertyChanged(nameof(IsMusicPage));
+            OnPropertyChanged(nameof(IsShelfPage));
+        }
+    }
+    /// <summary>Ask Claude is showing: as the pop-up over the pages, or as the current page.</summary>
+    public bool IsAskPage => _overlay == NotchOverlay.Ask || _overlay == NotchOverlay.None && CurrentPage == PageId.Ask;
+    /// <summary>The command palette is showing: as the pop-up, or as the current page.</summary>
+    public bool IsPaletteOpen => _overlay == NotchOverlay.Palette || _overlay == NotchOverlay.None && CurrentPage == PageId.Palette;
 
     /// <summary>Go to a page if it's switched on. Returns false when it's off.</summary>
     public bool GoTo(PageId id)
@@ -121,6 +153,7 @@ public sealed class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsMusicPage));
         OnPropertyChanged(nameof(IsShelfPage));
         OnPropertyChanged(nameof(IsAskPage));
+        OnPropertyChanged(nameof(IsPaletteOpen));
     }
 
     private void OnPagesChanged()

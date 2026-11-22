@@ -21,6 +21,7 @@ namespace DynamicNotch.Views;
 /// thumb that springs in on hover / drag / keyboard focus, a value bubble that follows the thumb while
 /// adjusting, and keyboard control (← → ↑ ↓ step, Page Up / Down ×10, Home / End). Raises
 /// <see cref="Changed"/> continuously while dragging (final = false) and once when the user lets go.
+/// With no label it draws on one line (track · value), for the right-hand side of a Settings row.
 /// </summary>
 internal sealed class ValueSlider : UserControl
 {
@@ -33,37 +34,58 @@ internal sealed class ValueSlider : UserControl
     private double _value;
     private bool _focused;
 
-    public ValueSlider(string label, double min, double max, double step, Func<double, string> format, string? caption = null)
+    public ValueSlider(string? label, double min, double max, double step, Func<double, string> format, string? caption = null)
     {
         _min = min; _max = max; _step = step; _format = format;
         IsTabStop = true;
         AllowFocusOnInteraction = false; // a click must not take focus: the scroller would jump to bring it into view mid-drag
         UseSystemFocusVisuals = true;
         Tag = SettingsWindow.NoDragTag;
-        var root = new Grid { MinHeight = 46 };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var head = new Grid();
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var text = new StackPanel();
-        text.Children.Add(new TextBlock { Text = label, Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold });
-        if (caption != null) text.Children.Add(new TextBlock { Text = caption, Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1 });
-        head.Children.Add(text);
+        bool inline = label == null;
+        var root = new Grid { MinHeight = inline ? 32 : 46 };
         _valueText.Style = SettingsUi.StyleOf("TimeText");
-        _valueText.Foreground = Theme.PrimaryText;
-        _valueText.VerticalAlignment = VerticalAlignment.Top;
-        Grid.SetColumn(_valueText, 1);
-        head.Children.Add(_valueText);
-        root.Children.Add(head);
+        _valueText.Foreground = Theme.AccentReadableBrush;
+        _valueText.HorizontalAlignment = HorizontalAlignment.Center;
+        _valueText.VerticalAlignment = VerticalAlignment.Center;
+        // The value sits in a small pill (tabular digits, centred, even padding) so it reads at a glance and never jitters.
+        var chip = new Border
+        {
+            Background = Theme.InputBrush, BorderBrush = Theme.CardBorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Padding = Theme.ChipPadding, MinWidth = inline ? 58 : 0, VerticalAlignment = inline ? VerticalAlignment.Center : VerticalAlignment.Top, Child = _valueText,
+        };
+        var trackHost = new Grid { Margin = inline ? new Thickness(0) : new Thickness(0, Theme.S1, 0, 0), VerticalAlignment = inline ? VerticalAlignment.Center : VerticalAlignment.Stretch };
+        if (inline)
+        {
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            chip.Margin = Theme.GapLeftS3;
+            Grid.SetColumn(chip, 1);
+            root.Children.Add(chip);
+        }
+        else
+        {
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var head = new Grid();
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var text = new StackPanel();
+            text.Children.Add(new TextBlock { Text = label, Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold });
+            if (caption != null) text.Children.Add(new TextBlock { Text = caption, Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1 });
+            head.Children.Add(text);
+            Grid.SetColumn(chip, 1);
+            head.Children.Add(chip);
+            root.Children.Add(head);
+            Grid.SetRow(trackHost, 1);
+        }
 
-        var trackHost = new Grid { Margin = new Thickness(0, Theme.S1, 0, 0) };
-        _track.FillBrush = Theme.AccentBrush;
+        _track.FillBrush = Theme.AccentTrackBrush;
+        _track.ThumbGlow = true;
         trackHost.Children.Add(_track);
         // Value bubble above the thumb.
-        _bubble.Background = Theme.AccentBrush;
+        _bubble.Background = Theme.AccentGradientBrush;
         _bubble.CornerRadius = new CornerRadius(9);
-        _bubble.Padding = new Thickness(7, 1, 7, 2);
+        _bubble.Padding = Theme.ChipPadding;
         _bubble.HorizontalAlignment = HorizontalAlignment.Left;
         _bubble.VerticalAlignment = VerticalAlignment.Top;
         _bubble.Margin = new Thickness(0, -20, 0, 0);
@@ -73,7 +95,6 @@ internal sealed class ValueSlider : UserControl
         _bubbleText.Foreground = Theme.OnAccentBrush;
         _bubble.Child = _bubbleText;
         trackHost.Children.Add(_bubble);
-        Grid.SetRow(trackHost, 1);
         root.Children.Add(trackHost);
         Content = root;
 
@@ -156,56 +177,123 @@ internal sealed class ValueSlider : UserControl
     }
 }
 
-/// <summary>A segmented pill (equal segments) whose accent-tinted highlight springs to the chosen segment.</summary>
+/// <summary>
+/// A segmented control: equal segments in a rounded track with even inner padding, and a raised highlight
+/// that slides (spring, small overshoot) to the chosen segment, always inset inside the track so its
+/// outline is never clipped. Hovering a segment tints it, pressing squashes the highlight slightly, and
+/// labels shrink to fit narrow segments (ellipsis + tooltip as a last resort). ← / → move the selection.
+/// All motion is compositor transforms / opacity.
+/// </summary>
 internal sealed class Segmented : Grid
 {
+    public const double TrackHeight = 34, Inset = 3;
+    private const double LabelSize = 12.5, MinLabelSize = 10.5;
     private readonly (string id, string label)[] _options;
-    private readonly Border _highlight = new();
+    private readonly Grid _cells = new();
+    private readonly Border _highlight = new(), _shine = new(), _glow = new();
+    private readonly List<Border> _hovers = new();
     private readonly List<TextBlock> _labels = new();
     private readonly CompositionPropertySet _p;
-    private readonly CompSpring _pos;
+    private readonly CompSpring _pos, _press;
     private int _index;
 
     public Segmented(params (string id, string label)[] options)
     {
         _options = options;
-        Height = 30;
+        Height = TrackHeight;
         Tag = SettingsWindow.NoDragTag;
         Background = Theme.InputBrush;
-        CornerRadius = new CornerRadius(15);
         BorderBrush = Theme.CardBorderBrush;
         BorderThickness = new Thickness(1);
-        for (int i = 0; i < options.Length; i++) ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        _highlight.Background = Theme.AccentSubtleBrush;
-        _highlight.BorderBrush = Theme.AccentBrush;
-        _highlight.BorderThickness = new Thickness(1);
-        _highlight.CornerRadius = new CornerRadius(13);
-        _highlight.Margin = new Thickness(1);
+        CornerRadius = new CornerRadius(TrackHeight / 2);
+        Padding = new Thickness(Inset - 1); // + the 1 px border = an even inset on every side
+        IsTabStop = true;
+        UseSystemFocusVisuals = true;
+        AllowFocusOnInteraction = false;
+
+        double inner = TrackHeight - 2 * Inset;
+        _highlight.HorizontalAlignment = HorizontalAlignment.Left;
+        _highlight.CornerRadius = new CornerRadius(inner / 2);
+        // The selected segment: a plain lighter-grey pill (no tint, sheen or glow), quiet on the black Settings page.
+        _highlight.Background = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
+        _highlight.IsHitTestVisible = false;
+        _shine.CornerRadius = _highlight.CornerRadius;
+        _shine.HorizontalAlignment = HorizontalAlignment.Left;
+        _shine.IsHitTestVisible = false;
+        _glow.HorizontalAlignment = HorizontalAlignment.Left;
+        _glow.Visibility = Visibility.Collapsed;
+        _glow.IsHitTestVisible = false;
+        Children.Add(_glow);
         Children.Add(_highlight);
+        Children.Add(_shine);
+
+        for (int i = 0; i < options.Length; i++) _cells.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (int i = 0; i < options.Length; i++)
         {
             int idx = i;
             var cell = new Grid { Background = Theme.TransparentBrush };
-            var t = new TextBlock { Text = options[i].label, FontFamily = Theme.FontMedium, FontWeight = FontWeights.Medium, FontSize = Theme.FontCaption + 1, Foreground = Theme.SecondaryText, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, IsHitTestVisible = false };
+            var hover = new Border { Background = Theme.CardHoverBrush, CornerRadius = new CornerRadius(inner / 2), IsHitTestVisible = false, Margin = new Thickness(1) };
+            _hovers.Add(hover);
+            cell.Children.Add(hover);
+            Motions.HoverFade(cell, hover, () => idx != _index);
+            var t = new TextBlock
+            {
+                Text = options[i].label, FontFamily = Theme.FontMedium, FontWeight = FontWeights.Medium, FontSize = LabelSize,
+                Foreground = Theme.SecondaryText, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.None, TextWrapping = TextWrapping.NoWrap, IsHitTestVisible = false, Margin = new Thickness(6, 0, 6, 0),
+            };
             _labels.Add(t);
             cell.Children.Add(t);
-            cell.Tapped += (_, e) => { e.Handled = true; Select(idx, true); Selected?.Invoke(_options[idx].id); };
+            cell.SizeChanged += (_, e) => Fit(t, e.NewSize.Width);
+            cell.PointerPressed += (_, _) => _press.SetTarget(1, Motion.Press);
+            cell.PointerReleased += (_, _) => _press.SetTarget(0, Motion.Press);
+            cell.PointerExited += (_, _) => _press.SetTarget(0, Motion.Press);
+            cell.Tapped += (_, e) => { e.Handled = true; Choose(idx); };
             SetColumn(cell, i);
-            Children.Add(cell);
+            _cells.Children.Add(cell);
         }
+        Children.Add(_cells);
+        // Corners follow the button roundness token; the highlight stays concentric with the track.
+        ButtonShape.Register(this, () =>
+        {
+            double outer = ButtonShape.RadiusFor(TrackHeight);
+            var r = new CornerRadius(Math.Max(2, outer - Inset));
+            CornerRadius = new CornerRadius(outer);
+            _highlight.CornerRadius = _shine.CornerRadius = _glow.CornerRadius = r;
+            foreach (var h in _hovers) h.CornerRadius = r;
+        });
+
         var hv = Anim.VisualOf(_highlight, translation: true);
-        _p = hv.Compositor.CreatePropertySet();
+        var c = hv.Compositor;
+        _p = c.CreatePropertySet();
         _p.InsertScalar("w", 0);
         _pos = new CompSpring(_p, "i", Motion.TabHighlight, 0, precision: 0.05);
-        hv.StartAnimation("Translation", Anim.Expr(hv.Compositor, "Vector3(p.i * p.w, 0, 0)", ("p", _p)));
+        _press = new CompSpring(_p, "k", Motion.Press, 0);
+        foreach (var el in new UIElement[] { _highlight, _shine, _glow })
+        {
+            var v = Anim.VisualOf(el, translation: true);
+            v.StartAnimation("Translation", Anim.Expr(c, "Vector3(p.i * p.w, 0, 0)", ("p", _p)));
+            v.StartAnimation("Scale", Anim.Expr(c, "Vector3(1 - 0.04 * p.k, 1 - 0.08 * p.k, 1)", ("p", _p)));
+        }
         SizeChanged += (_, e) =>
         {
-            double w = e.NewSize.Width / Math.Max(1, _options.Length);
-            _highlight.Width = Math.Max(0, w - 2);
-            _highlight.HorizontalAlignment = HorizontalAlignment.Left;
-            _p.InsertScalar("w", (float)w);
+            double cell = Math.Max(0, (e.NewSize.Width - 2 * Inset) / Math.Max(1, _options.Length));
+            // Height: stretch to the track's inner slot rather than a fixed value. At 125% (and other fractional
+            // scales) layout rounding makes the slot a fraction of a pixel shorter than `inner`, and a fixed
+            // height then gets its bottom edge clipped.
+            _highlight.Width = _shine.Width = cell;
+            _glow.Width = cell + 16;
+            _glow.Margin = new Thickness(-8, -8, 0, -8);
+            _p.InsertScalar("w", (float)cell);
+            foreach (var el in new UIElement[] { _highlight, _shine })
+                Anim.VisualOf(el).CenterPoint = new System.Numerics.Vector3((float)cell / 2, (float)inner / 2, 0);
+            Anim.VisualOf(_glow).CenterPoint = new System.Numerics.Vector3((float)cell / 2 + 8, (float)inner / 2 + 8, 0);
         };
-        IsTabStop = false;
+        KeyDown += (_, e) =>
+        {
+            if (e.Key == VirtualKey.Left && _index > 0) { Choose(_index - 1); e.Handled = true; }
+            else if (e.Key == VirtualKey.Right && _index < _options.Length - 1) { Choose(_index + 1); e.Handled = true; }
+        };
     }
 
     public event Action<string>? Selected;
@@ -213,18 +301,51 @@ internal sealed class Segmented : Grid
     public string Value
     {
         get => _options[_index].id;
-        set { int i = Array.FindIndex(_options, o => o.id == value); if (i >= 0) Select(i, IsLoaded); }
+        set { int i = Array.FindIndex(_options, o => o.id == value); if (i >= 0) Select(i, IsLoaded); else Unselect(); }
+    }
+
+    private void Choose(int i)
+    {
+        Select(i, true);
+        Selected?.Invoke(_options[i].id);
+    }
+
+    /// <summary>A value none of the segments represents (e.g. a custom notch scale): no highlight.</summary>
+    private void Unselect()
+    {
+        _highlight.Opacity = _shine.Opacity = _glow.Opacity = 0;
+        _index = -1;
+        for (int k = 0; k < _labels.Count; k++) { _labels[k].Foreground = Theme.SecondaryText; _labels[k].FontFamily = Theme.FontMedium; }
     }
 
     private void Select(int i, bool animate)
     {
+        _highlight.Opacity = _shine.Opacity = 1;
+        _glow.Opacity = 0.45;
         _index = i;
         if (animate) _pos.SetTarget(i, Motion.TabHighlight); else _pos.Snap(i);
         for (int k = 0; k < _labels.Count; k++)
         {
-            _labels[k].Foreground = k == i ? Theme.PrimaryText : Theme.SecondaryText;
-            _labels[k].FontFamily = k == i ? Theme.FontSemiBold : Theme.FontMedium;
+            bool on = k == i;
+            _labels[k].Foreground = on ? Theme.PrimaryText : Theme.SecondaryText;
+            _labels[k].FontFamily = on ? Theme.FontSemiBold : Theme.FontMedium;
+            _labels[k].FontWeight = on ? FontWeights.SemiBold : FontWeights.Medium;
         }
+    }
+
+    /// <summary>Shrinks a label to fit its segment; if even the smallest size is too wide, it ends with "…" and gets a tooltip.</summary>
+    private static void Fit(TextBlock t, double cellWidth)
+    {
+        double room = Math.Max(0, cellWidth - 12);
+        t.TextTrimming = TextTrimming.None;
+        for (double size = LabelSize; size >= MinLabelSize; size -= 0.5)
+        {
+            t.FontSize = size;
+            t.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            if (t.DesiredSize.Width <= room) { ToolTipService.SetToolTip(t.Parent as UIElement, null); return; }
+        }
+        t.TextTrimming = TextTrimming.CharacterEllipsis;
+        ToolTipService.SetToolTip(t.Parent as UIElement, t.Text);
     }
 }
 
@@ -241,7 +362,8 @@ internal sealed class SwatchGrid : Grid
     public SwatchGrid()
     {
         Tag = SettingsWindow.NoDragTag;
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Theme.S2 };
+        double outer = Chip + 2 * RingGap + 4;
+        var panel = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = outer + Theme.S1, ItemHeight = outer + Theme.S1 };
         foreach (var p in AccentPresets.All) panel.Children.Add(Make(p.Id, p.Name, new SolidColorBrush(p.Color)));
         var rainbow = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(1, 1) };
         foreach (var (o, c) in new[] { (0.0, 0xFF3B30), (0.25, 0xFFCC00), (0.5, 0x34C759), (0.75, 0x0A84FF), (1.0, 0xBF5AF2) })

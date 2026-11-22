@@ -67,9 +67,13 @@ public sealed class HistoryPanel : Grid
         _header.Children.Add(title);
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
-        _undo = new PillButton(Icons.Retry, "Undo", quiet: true) { Height = Theme.HubSmallPillHeight, Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center, Compact = true };
+        // The pills (24 px) are taller than the header row (20 px): a negative vertical margin lets them draw at
+        // full height instead of being clipped by the row, without changing the layout below.
+        double overhang = Math.Max(0, (Theme.HubSmallPillHeight - Theme.HubHeaderHeight) / 2) + 1;
+        _undo = new PillButton(Icons.Retry, "Undo", quiet: true) { Height = Theme.HubSmallPillHeight, Margin = new Thickness(0, -overhang, Theme.S2, -overhang), VerticalAlignment = VerticalAlignment.Center, Compact = true };
         _undo.Click += Undo;
         right.Children.Add(_undo);
+        _clear.Margin = new Thickness(0, -overhang, 0, -overhang);
         _clear.Click += ClearAll;
         right.Children.Add(_clear);
         _headerRight.Children.Add(right);
@@ -399,6 +403,7 @@ public sealed class HistoryPanel : Grid
         public ClearButton()
         {
             Height = Theme.HubSmallPillHeight;
+            CornerRadius = new CornerRadius(Theme.HubSmallPillHeight / 2); // clip background, border, hover layer and hit area to the pill
             MinWidth = Theme.ClearPillMinWidth;
             Background = Theme.TransparentBrush;
             var radius = new CornerRadius(Theme.HubSmallPillHeight / 2);
@@ -406,6 +411,7 @@ public sealed class HistoryPanel : Grid
             _fill.Background = Theme.PillLightenBrush;
             _fill.CornerRadius = radius;
             Children.Add(back);
+            ButtonShape.Register(this, () => CornerRadius = back.CornerRadius = _fill.CornerRadius = new CornerRadius(ButtonShape.RadiusFor(Theme.HubSmallPillHeight)));
             Children.Add(_fill);
             _label.Text = "Clear all";
             foreach (var t in new[] { _label, _done })

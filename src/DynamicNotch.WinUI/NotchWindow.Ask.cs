@@ -29,7 +29,6 @@ public sealed partial class NotchWindow
         var page = _frame.Ask;
         page.NotchSizeChanged += () => { if (_state == NotchState.Expanded && Vm.IsAskPage) ApplyTargets(); };
         page.FocusRequested += () => { TakeFocus(); Ui.Post(UpdateKeyCapture); };
-        page.Dots.PageClicked += i => Vm.PageIndex = i;
         page.ThumbPreviewRequested += ShowImagePreview;
         page.ThumbPreviewEnded += () => _frame.Preview.SetShown(false);
         Vm.Ask.PropertyChanged += OnAskChanged;
@@ -39,7 +38,9 @@ public sealed partial class NotchWindow
         Root.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, e) =>
         {
             if (e.Key != VirtualKey.Escape || !_hasFocus) return;
-            if (!EscapeClosesPopover()) CollapseAsk();
+            if (EscapeClosesPopover()) { e.Handled = true; return; }
+            if (Vm.Overlay != NotchOverlay.None) CloseOverlay(collapse: Vm.IsPaletteOpen);
+            else CollapseAsk();
             e.Handled = true;
         }), handledEventsToo: true);
         Activated += (_, e) =>
@@ -67,12 +68,7 @@ public sealed partial class NotchWindow
             CollapseAsk();
             return;
         }
-        if (!Vm.GoTo(PageId.Ask)) return; // Ask switched off in Settings ▸ Pages
-        _page.SetTarget(Vm.PageIndex, Motion.Page);
-        Pin();
-        TakeFocus();
-        _frame.Ask.FocusInput();
-        UpdateKeyCapture();
+        OpenFeature(PageId.Ask, fromHotkey: true);
     }
 
     /// <summary>Esc / hotkey: close the notch and give focus back to the previous window.</summary>
@@ -154,8 +150,7 @@ public sealed partial class NotchWindow
 
         _selecting = false;
         if (Vm.CurrentPill != null) ShowPill(Vm.CurrentPill);
-        Vm.GoTo(PageId.Ask);
-        Pin();
+        OpenFeature(PageId.Ask);
         if (hadFocus || region != null) { TakeFocus(); _frame.Ask.FocusInput(); }
         UpdateKeyCapture();
     }

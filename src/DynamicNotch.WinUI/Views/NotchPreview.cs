@@ -18,8 +18,8 @@ namespace DynamicNotch.Views;
 /// controls (accent brushes, radius tokens, LevelTrack, PillSwitch, BatteryRing, the motion springs), in
 /// three modes: Collapsed, Expanded (a music-page sample at half size) and Pill (a volume pill).
 /// The body is a compositor rounded rectangle whose width, height, corner radius and content scale are
-/// springs, so a mode switch, a radius change and a Look all morph. Accent changes ripple across it,
-/// a motion change replays expand / collapse with the new feel, sounds pulse a row of equaliser bars, and
+/// springs, so a mode switch and a radius change both morph. Accent changes ripple across it,
+/// a motion change replays expand / collapse with the new feel, and
 /// the border highlight / shadow / glow follow their sliders. Everything is transform / opacity / clip.
 /// </summary>
 internal sealed class NotchPreview : Grid
@@ -30,7 +30,6 @@ internal sealed class NotchPreview : Grid
     private readonly Grid _stage = new(), _content = new();
     private readonly Grid _collapsed = new(), _expanded = new(), _pill = new();
     private readonly Ellipse _ripple = new(), _glow = new();
-    private readonly StackPanel _eq = new() { Orientation = Orientation.Horizontal, Spacing = 3 };
     private readonly Segmented _modes;
     private readonly CompositionPropertySet _p;
     private readonly CompSpring _w, _h, _r, _s, _fadeC, _fadeE, _fadeP;
@@ -43,7 +42,7 @@ internal sealed class NotchPreview : Grid
     private string _mode = "expanded";
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _demo;
 
-    public NotchPreview(ThemeService theme, SoundService sounds)
+    public NotchPreview(ThemeService theme)
     {
         _theme = theme;
         Height = PreviewHeight;
@@ -52,10 +51,8 @@ internal sealed class NotchPreview : Grid
         BorderBrush = Theme.CardBorderBrush;
         BorderThickness = new Thickness(1);
 
-        // "Screen" behind the notch: a faint wallpaper-like gradient so the black notch reads.
-        var wall = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(1, 1) };
-        wall.GradientStops.Add(new GradientStop { Offset = 0, Color = Color.FromArgb(255, 0x1B, 0x1D, 0x2A) });
-        wall.GradientStops.Add(new GradientStop { Offset = 1, Color = Color.FromArgb(255, 0x12, 0x14, 0x1C) });
+        // "Screen" behind the notch: a flat neutral dark grey, light enough that the black notch reads on it.
+        var wall = new SolidColorBrush(Color.FromArgb(255, 0x18, 0x18, 0x1A));
         Children.Add(new Border { Background = wall, CornerRadius = Theme.Radius, IsHitTestVisible = false });
 
         _stage.IsHitTestVisible = false;
@@ -139,14 +136,6 @@ internal sealed class NotchPreview : Grid
         _ripple.VerticalAlignment = VerticalAlignment.Center;
         Children.Add(_ripple);
 
-        // Equaliser bars (bottom-right) while a sound plays.
-        for (int i = 0; i < 5; i++) _eq.Children.Add(new Border { Width = 3, Height = 16, CornerRadius = new CornerRadius(1.5), Background = Theme.AccentBrush, VerticalAlignment = VerticalAlignment.Bottom });
-        _eq.HorizontalAlignment = HorizontalAlignment.Right;
-        _eq.VerticalAlignment = VerticalAlignment.Bottom;
-        _eq.Margin = new Thickness(0, 0, Theme.S4, Theme.S3);
-        _eq.Opacity = 0;
-        Children.Add(_eq);
-
         _modes = new Segmented(("collapsed", "Collapsed"), ("expanded", "Expanded"), ("pill", "Pill")) { Width = 240 };
         _modes.Value = _mode;
         _modes.Selected += m => SetMode(m, animate: true);
@@ -159,7 +148,6 @@ internal sealed class NotchPreview : Grid
         Unloaded += (_, _) => Theme.AccentChanged -= OnAccent;
         theme.Changed += OnTheme;
         theme.Demo += OnDemo;
-        sounds.Played += (_, ms) => PulseEq(ms);
         SetMode(_mode, animate: false);
     }
 
@@ -210,7 +198,7 @@ internal sealed class NotchPreview : Grid
     private void OnTheme(ThemeService.Part parts)
     {
         if (parts.HasFlag(ThemeService.Part.Radius)) _r.SetTarget(Theme.CornerRadius, Motion.Notch);
-        if (parts.HasFlag(ThemeService.Part.Surface) || parts.HasFlag(ThemeService.Part.Glow)) ApplySurface();
+        if (parts.HasFlag(ThemeService.Part.Surface) || parts.HasFlag(ThemeService.Part.Glow) || parts.HasFlag(ThemeService.Part.Visualizer)) ApplySurface();
         if (parts.HasFlag(ThemeService.Part.Motion)) ReplayMotion();
     }
 
@@ -237,7 +225,14 @@ internal sealed class NotchPreview : Grid
         _shadow.Opacity = (float)Math.Min(1, Theme.ShadowOpacity * 1.2);
         var s = _theme.Current;
         _glow.Opacity = s.GlowEnabled ? Math.Min(1, 0.55 * s.GlowIntensity) : 0;
+        foreach (var b in _bars)
+        {
+            b.Background = s.VisualizerColor == "accent" ? Theme.AccentBarBrush : Theme.PrimaryText;
+            b.Visibility = s.Visualizer == "off" ? Visibility.Collapsed : Visibility.Visible;
+        }
     }
+
+    private readonly List<Border> _bars = new();
 
     /// <summary>Plays expand ⇄ collapse with the current motion feel and speed, then returns to the chosen mode.</summary>
     private void ReplayMotion()
@@ -279,35 +274,6 @@ internal sealed class NotchPreview : Grid
         v.StartAnimation("Opacity", o);
     }
 
-    private void PulseEq(int ms)
-    {
-        if (!Anim.Enabled) return;
-        var c = Anim.VisualOf(_eq).Compositor;
-        var dur = TimeSpan.FromMilliseconds(Math.Max(260, ms + 120));
-        var o = c.CreateScalarKeyFrameAnimation();
-        o.InsertKeyFrame(0, 1);
-        o.InsertKeyFrame(0.8f, 1);
-        o.InsertKeyFrame(1, 0);
-        o.Duration = dur;
-        Anim.VisualOf(_eq).StartAnimation("Opacity", o);
-        var rng = new Random(ms);
-        for (int i = 0; i < _eq.Children.Count; i++)
-        {
-            var b = (FrameworkElement)_eq.Children[i];
-            var v = Anim.VisualOf(b);
-            v.CenterPoint = new Vector3(1.5f, 16, 0);
-            var a = c.CreateVector3KeyFrameAnimation();
-            int keys = 6;
-            for (int k = 0; k <= keys; k++)
-            {
-                float y = k == 0 || k == keys ? 0.2f : (float)(0.3 + 0.7 * rng.NextDouble());
-                a.InsertKeyFrame((float)k / keys, new Vector3(1, y, 1));
-            }
-            a.Duration = dur;
-            v.StartAnimation("Scale", a);
-        }
-    }
-
     // ---- Content (built from the real controls and tokens) ---------------------------------------------------
     private void BuildCollapsed()
     {
@@ -320,7 +286,12 @@ internal sealed class NotchPreview : Grid
         var time = new TextBlock { Text = ClockService.FormatTime(new DateTime(2026, 1, 1, 9, 41, 0)), Style = SettingsUi.StyleOf("ClockTimeText"), HorizontalAlignment = HorizontalAlignment.Center };
         _collapsed.Children.Add(time);
         var bars = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2.5, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = Theme.CollapsedPadding };
-        foreach (var hgt in new[] { 6.0, 12, 8, 10 }) bars.Children.Add(new Border { Width = 3, Height = hgt, CornerRadius = new CornerRadius(1.5), Background = Theme.PrimaryText, VerticalAlignment = VerticalAlignment.Center });
+        foreach (var hgt in new[] { 6.0, 12, 8, 10 })
+        {
+            var bar = new Border { Width = 3, Height = hgt, CornerRadius = new CornerRadius(1.5), Background = Theme.AccentBarBrush, VerticalAlignment = VerticalAlignment.Center };
+            _bars.Add(bar);
+            bars.Children.Add(bar);
+        }
         _collapsed.Children.Add(bars);
     }
 

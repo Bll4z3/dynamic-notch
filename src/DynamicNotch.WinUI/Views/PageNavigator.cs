@@ -93,15 +93,31 @@ public sealed class PageNavigator : Grid
         string pillOpacity = $"0.55 + 0.45 * Clamp(S.Pill, 0, 1)";
         double centreRectWidth = Math.Max(1, iconsWidth - Theme.NavPillHeight);
 
-        var capL = Ellipse(Theme.NavPillHeight, Theme.NavPillColor);
-        var capR = Ellipse(Theme.NavPillHeight, Theme.NavPillColor);
-        var mid = new Rectangle { Width = centreRectWidth, Height = Theme.NavPillHeight, Fill = new SolidColorBrush(Theme.NavPillColor), IsHitTestVisible = false };
-        Children.Add(mid);
-        Bind(capL, "Translation", $"Vector3(-{centre} / 2, 0, 0)", translation: true);
-        Bind(capR, "Translation", $"Vector3({centre} / 2, 0, 0)", translation: true);
-        Motions.CentreOrigin(mid);
-        Bind(mid, "Scale", $"Vector3({centre} / {Anim.F(centreRectWidth)}, 1, 1)");
-        foreach (var el in new UIElement[] { capL, capR, mid }) Bind(el, "Opacity", pillOpacity);
+        // ONE rounded rectangle (radius = height / 2) whose width follows the pill expression. (It used to be two
+        // round caps plus a middle bar, each at ~55% opacity: where they overlapped the opacity doubled, which
+        // showed as dark circles at both ends on the tinted music-page background.)
+        _ = centre; _ = centreRectWidth;
+        var pillHost = new Border { IsHitTestVisible = false };
+        Children.Add(pillHost);
+        var pillGeo = _c.CreateRoundedRectangleGeometry();
+        pillGeo.CornerRadius = new System.Numerics.Vector2((float)Theme.NavPillHeight / 2);
+        Chain("HostW", $"{Anim.F(iconsWidth + 2 * Theme.NavHitPadding)}");
+        var size = _c.CreateExpressionAnimation($"Vector2(S.PillW, {Anim.F(Theme.NavPillHeight)})");
+        size.SetReferenceParameter("S", _s);
+        pillGeo.StartAnimation("Size", size);
+        var offset = _c.CreateExpressionAnimation($"Vector2((S.HostW - S.PillW) / 2, {Anim.F((Theme.FooterHeight - Theme.NavPillHeight) / 2)})");
+        offset.SetReferenceParameter("S", _s);
+        pillGeo.StartAnimation("Offset", offset);
+        var pillShape = _c.CreateSpriteShape(pillGeo);
+        pillShape.FillBrush = _c.CreateColorBrush(Theme.NavPillColor);
+        var pillVisual = _c.CreateShapeVisual();
+        pillVisual.Size = new System.Numerics.Vector2((float)(iconsWidth + 2 * Theme.NavHitPadding), (float)Theme.FooterHeight);
+        pillVisual.Shapes.Add(pillShape);
+        var po = _c.CreateExpressionAnimation(pillOpacity);
+        po.SetReferenceParameter("S", _s);
+        po.SetReferenceParameter("N", _page);
+        pillVisual.StartAnimation("Opacity", po);
+        Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetElementChildVisual(pillHost, pillVisual);
 
         // Highlight behind the active icon, following the page spring.
         var highlight = Ellipse(Theme.NavHighlightSize, Theme.NavHighlightColor);
@@ -121,6 +137,14 @@ public sealed class PageNavigator : Grid
                 Width = Theme.NavDot + Theme.NavDotActiveExtra, Height = Theme.NavDot,
                 CornerRadius = new CornerRadius(Theme.NavDot / 2), // a pill: half its height
                 Background = Theme.PrimaryText, IsHitTestVisible = false,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            };
+            // The current page's dot carries the accent: an accent copy over the white dot, shown by how
+            // "current" the page is (so it slides and stretches with the pager).
+            var accentDot = new Border
+            {
+                Width = dot.Width, Height = dot.Height, CornerRadius = dot.CornerRadius,
+                Background = Theme.AccentReadableBrush, IsHitTestVisible = false,
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
             };
             // Dimmed icon, plus an accent copy on top that shows by how "current" the page is.
@@ -152,6 +176,10 @@ public sealed class PageNavigator : Grid
             Bind(dot, "Translation", $"Vector3({cx}, 0, 0)", translation: true);
             Bind(dot, "Scale", $"Vector3({W(i)} / {Anim.F(Theme.NavDot + Theme.NavDotActiveExtra)} * (1 - 0.6 * {cm}), 1 - 0.6 * {cm}, 1)");
             Bind(dot, "Opacity", $"(0.3 + 0.7 * {Active(i)}) * (1 - {cm})");
+            Motions.CentreOrigin(accentDot);
+            Bind(accentDot, "Translation", $"Vector3({cx}, 0, 0)", translation: true);
+            Bind(accentDot, "Scale", $"Vector3({W(i)} / {Anim.F(Theme.NavDot + Theme.NavDotActiveExtra)} * (1 - 0.6 * {cm}), 1 - 0.6 * {cm}, 1)");
+            Bind(accentDot, "Opacity", $"{Active(i)} * (1 - {cm})");
             // Icon: grows 0.5 → 1 and fades in at the same spot; hover adds a little scale.
             string s = Anim.F(Motion.NavIconStartScale);
             Motions.CentreOrigin(icon);
@@ -161,6 +189,7 @@ public sealed class PageNavigator : Grid
             Bind(accent, "Opacity", Active(i));
 
             Children.Add(dot);
+            Children.Add(accentDot);
             Children.Add(icon);
             _slots.Add(new Slot { Dot = dot, Hit = hit, Icon = icon, Morph = morph, Hover = hover });
         }

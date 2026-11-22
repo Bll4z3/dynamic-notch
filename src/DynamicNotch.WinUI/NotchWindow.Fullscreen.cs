@@ -31,7 +31,7 @@ public sealed partial class NotchWindow
             v.StartAnimation("Opacity", Anim.Expr(v.Compositor, "Clamp(p.v, 0, 1)", ("p", set)));
             _hideTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
             _hideTimer.IsRepeating = false;
-            _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); if (_fullscreenHidden) Native.ShowWindow(_hwnd, Native.SW_HIDE); };
+            _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); if (_fullscreenHidden) { Native.ShowWindow(_hwnd, Native.SW_HIDE); _shadowWindow?.Hide(); } };
         }
         _hideTimer!.Stop();
 
@@ -51,7 +51,8 @@ public sealed partial class NotchWindow
         {
             Native.ShowWindow(_hwnd, Native.SW_SHOWNOACTIVATE);
             Native.MakeSeeThroughPopup(_hwnd);
-            Native.ReassertTopmost(_hwnd);
+            ReassertTopmost();
+            _shadowWindow?.Show(_hwnd);
             UpdateRegion();
             _visibleFade.SetTarget(1, Motion.FadeIn);
         }
