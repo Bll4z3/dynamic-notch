@@ -110,6 +110,30 @@ public static class Icons
     public const string Lock = LockBody + " " + LockShackle;
     /// <summary>Six-dot drag handle.</summary>
     public const string Grip = "M9 5 h.01 M9 12 h.01 M9 19 h.01 M15 5 h.01 M15 12 h.01 M15 19 h.01";
+    // ---- Header pop-ups and the screenshot shelf (Lucide-style strokes) ----
+    public const string Search = "M21 21 l-4.34 -4.34 M19 11 a8 8 0 1 1 -16 0 a8 8 0 1 1 16 0 z";
+    public const string Command = "M15 6 v12 a3 3 0 1 0 3 -3 H6 a3 3 0 1 0 3 3 V6 a3 3 0 1 0 -3 3 h12 a3 3 0 1 0 -3 -3";
+    public const string Calculator = "M6 2 h12 a2 2 0 0 1 2 2 v16 a2 2 0 0 1 -2 2 H6 a2 2 0 0 1 -2 -2 V4 a2 2 0 0 1 2 -2 z M8 6 h8 M16 14 v4 M16 10 h.01 M12 10 h.01 M8 10 h.01 M12 14 h.01 M8 14 h.01 M12 18 h.01 M8 18 h.01";
+    public const string Globe = "M22 12 a10 10 0 1 1 -20 0 a10 10 0 1 1 20 0 z M12 2 a14.5 14.5 0 0 0 0 20 a14.5 14.5 0 0 0 0 -20 M2 12 h20";
+    public const string Ruler = "M21.3 15.3 a2.4 2.4 0 0 1 0 3.4 l-2.6 2.6 a2.4 2.4 0 0 1 -3.4 0 L2.7 8.7 a2.41 2.41 0 0 1 0 -3.4 l2.6 -2.6 a2.41 2.41 0 0 1 3.4 0 Z M14.5 12.5 l2 -2 M11.5 9.5 l2 -2 M8.5 6.5 l2 -2 M17.5 15.5 l2 -2";
+    public const string Coins = "M14 8 a6 6 0 1 1 -12 0 a6 6 0 1 1 12 0 z M18.09 10.37 A6 6 0 1 1 10.34 18 M7 6 h1 v4 M16.71 13.88 l.7 .71 -2.82 2.82";
+    public const string Power = "M12 2 v10 M18.4 6.6 a9 9 0 1 1 -12.77 .04";
+    public const string AppWindow = "M4 3 h16 a2 2 0 0 1 2 2 v14 a2 2 0 0 1 -2 2 H4 a2 2 0 0 1 -2 -2 V5 a2 2 0 0 1 2 -2 z M2 8 h20 M6 5.5 h.01 M9 5.5 h.01";
+    public const string Clock = "M22 12 a10 10 0 1 1 -20 0 a10 10 0 1 1 20 0 z M12 6 v6 l4 2";
+    public const string Book = "M4 19.5 v-15 A2.5 2.5 0 0 1 6.5 2 H19 a1 1 0 0 1 1 1 v18 a1 1 0 0 1 -1 1 H6.5 a1 1 0 0 1 0 -5 H20";
+    public const string Hash = "M4 9 h16 M4 15 h16 M10 3 L8 21 M16 3 l-2 18";
+    public const string Calendar = "M8 2 v4 M16 2 v4 M5 4 h14 a2 2 0 0 1 2 2 v14 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 V6 a2 2 0 0 1 2 -2 z M3 10 h18";
+    public const string Terminal = "M4 17 l6 -6 -6 -6 M12 19 h8";
+    public const string Star = "M11.53 2.3 a.53 .53 0 0 1 .95 0 l2.31 4.68 a2.12 2.12 0 0 0 1.6 1.16 l5.16 .76 a.53 .53 0 0 1 .3 .9 l-3.74 3.64 a2.12 2.12 0 0 0 -.61 1.88 l.88 5.14 a.53 .53 0 0 1 -.77 .56 l-4.62 -2.43 a2.12 2.12 0 0 0 -1.97 0 L6.4 21.01 a.53 .53 0 0 1 -.77 -.56 l.88 -5.14 a2.12 2.12 0 0 0 -.61 -1.88 L2.16 9.79 a.53 .53 0 0 1 .3 -.9 l5.16 -.76 a2.12 2.12 0 0 0 1.6 -1.16 z";
+    public const string Dice = "M5 3 h14 a2 2 0 0 1 2 2 v14 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 V5 a2 2 0 0 1 2 -2 z M16 8 h.01 M8 8 h.01 M8 16 h.01 M16 16 h.01 M12 12 h.01";
+    public const string Sliders = "M21 4 H14 M10 4 H3 M21 12 H12 M8 12 H3 M21 20 H16 M12 20 H3 M14 2 v4 M8 10 v4 M16 18 v4";
+    public const string Screenshot = "M3 7 V5 a2 2 0 0 1 2 -2 h2 M17 3 h2 a2 2 0 0 1 2 2 v2 M21 17 v2 a2 2 0 0 1 -2 2 h-2 M7 21 H5 a2 2 0 0 1 -2 -2 v-2 M8 9 h8 v6 H8 z";
+    public const string Pen = "M21.17 6.81 a1 1 0 0 0 -3.99 -3.99 L3.84 16.17 a2 2 0 0 0 -.5 .83 l-1.32 4.35 a.5 .5 0 0 0 .62 .62 l4.35 -1.32 a2 2 0 0 0 .83 -.5 z M15 5 l4 4";
+    public const string Highlighter = "M9 11 l-6 6 v3 h9 l3 -3 M22 12 l-4.6 4.6 a2 2 0 0 1 -2.8 0 l-5.2 -5.2 a2 2 0 0 1 0 -2.8 L14 4";
+    public const string ArrowTool = "M7 17 L17 7 M7 7 h10 v10";
+    public const string TextTool = "M4 7 V4 h16 v3 M9 20 h6 M12 4 v16";
+    public const string Save = "M15.2 3 a2 2 0 0 1 1.4 .6 l3.8 3.8 a2 2 0 0 1 .6 1.4 V19 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 V5 a2 2 0 0 1 2 -2 z M17 21 v-7 a1 1 0 0 0 -1 -1 H8 a1 1 0 0 0 -1 1 v7 M7 3 v4 a1 1 0 0 0 1 1 h7";
+    public const string ScanText = "M3 7 V5 a2 2 0 0 1 2 -2 h2 M17 3 h2 a2 2 0 0 1 2 2 v2 M21 17 v2 a2 2 0 0 1 -2 2 h-2 M7 21 H5 a2 2 0 0 1 -2 -2 v-2 M7 8 h8 M7 12 h10 M7 16 h6";
 
     // ---- Rendering ---------------------------------------------------------------------------
     public static bool IsFilled(string data) => data.StartsWith("F1", StringComparison.Ordinal);

@@ -55,6 +55,10 @@ public sealed class PillSwitch : UserControl
         root.Children.Add(_halo);
         track.Children.Add(_off);
         track.Children.Add(_on);
+        // Hover: the track lifts a shade (springs in and out).
+        var hover = new Border { CornerRadius = radius, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)) };
+        track.Children.Add(hover);
+        Motions.HoverFade(this, hover);
         foreach (var (e, colour) in new[] { (_thumbOff, Theme.SwitchThumbOffColor), (_thumbOn, Theme.SwitchThumbOnColor) })
         {
             e.Width = e.Height = Theme.SwitchThumbSize;

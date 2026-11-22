@@ -33,8 +33,6 @@ public sealed partial class NotchWindow
 
     /// <summary>Dev: the navigator's icon state without a hover.</summary>
     public void ShowNavigatorIcons() => _frame.Navigator.ShowIcons();
-    /// <summary>Dev: the Notifications + Controls page (for --perf-popovers).</summary>
-    internal Views.HubPage DevHub => _frame.Hub;
 
     private void BuildExpanded()
     {
@@ -43,9 +41,9 @@ public sealed partial class NotchWindow
 
         // The header ring/time only exist on pages 1-2 (the Ask page gets its own header in stage 4).
         AddMatched(NotchRing, _frame.HeaderRing, edge: +1, parentShifted: false, want: 0,
-            page: () => Vm.Pages.IndexOf(PageId.Ask), allowed: () => true);
+            page: () => -1, allowed: () => Vm.Overlay == ViewModels.NotchOverlay.None);
         AddMatched(CollapsedTime, _frame.HeaderTime, edge: 0, parentShifted: false, want: 0,
-            page: () => Vm.Pages.IndexOf(PageId.Ask), allowed: () => true);
+            page: () => -1, allowed: () => Vm.Overlay == ViewModels.NotchOverlay.None);
         AddMatched(MiniArt, _frame.Music.ArtElement, edge: -1, parentShifted: true, want: 1,
             page: () => Vm.Pages.IndexOf(PageId.Music), allowed: () => Vm.Music.IsPlaying && !Vm.MinimalNotch && !CompactTimerShown, pageScrolled: true);
         UpdateMatchedFlags();

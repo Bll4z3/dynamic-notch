@@ -59,7 +59,7 @@ public sealed class CustomisationTabViewModel
         if (_undo is not { } u) return;
         _undo = null;
         Theme.ReplaceAll(u.custom);
-        var font = Fonts.Find(u.font) ?? Fonts.BundledFonts[0];
+        var font = Fonts.Find(u.font) ?? Fonts.Fonts[0];
         Fonts.Apply(font);
     }
 

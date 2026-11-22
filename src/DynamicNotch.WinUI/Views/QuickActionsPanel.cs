@@ -12,38 +12,29 @@ using Microsoft.UI.Xaml.Media;
 namespace DynamicNotch.Views;
 
 /// <summary>
-/// Page "Notifications + Controls". Left half: the notification history (<see cref="HistoryPanel"/>).
-/// Right half: quick actions as rounded tiles (Wi-Fi, Bluetooth, airplane mode, Do Not Disturb, mute mic,
-/// energy saver, night light, Cast) and volume / brightness sliders. Rows and tiles use the small radius.
+/// Quick actions, shown in the header pop-up (<see cref="HeaderPopup"/>) from the sliders icon in the open
+/// notch: rounded tiles (Wi-Fi, Bluetooth, airplane mode, Do Not Disturb, mute mic, energy saver, night
+/// light, Cast) and volume / brightness sliders. Wi-Fi and Bluetooth open their own popovers over the
+/// panel. (This used to be the right half of the "Notifications + Controls" page.)
 /// </summary>
-public sealed class HubPage : Grid
+public sealed class QuickActionsPanel : Grid
 {
     private readonly HubViewModel _vm;
     private readonly Grid _rightHeader = new(), _tiles = new(), _sliders = new();
     private readonly Tile _wifi, _bluetooth, _airplane, _dnd, _mic, _saver, _night, _cast;
     private readonly SliderRow _volume, _brightness;
 
-    public HubPage(HubViewModel vm)
+    public QuickActionsPanel(HubViewModel vm)
     {
         _vm = vm;
-        ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        ColumnDefinitions.Add(new ColumnDefinition { Width = Theme.GapS4 });
-        ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        // ================= Left: notification history =================
-        History = new HistoryPanel(vm);
-        Children.Add(History);
-
-        // ================= Right: quick actions =================
         var right = new Grid();
-        SetColumn(right, 2);
         right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(Theme.HubHeaderHeight) });
         right.RowDefinitions.Add(new RowDefinition { Height = Theme.GapS2 });
         right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         right.RowDefinitions.Add(new RowDefinition { Height = Theme.GapS2 });
         right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var rtitle = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        rtitle.Children.Add(new VectorIcon { Data = Icons.Dashboard, Size = Theme.IconSmall, Foreground = Theme.SecondaryText, VerticalAlignment = VerticalAlignment.Center });
+        rtitle.Children.Add(new VectorIcon { Data = Icons.Sliders, Size = Theme.IconSmall, Foreground = Theme.SecondaryText, VerticalAlignment = VerticalAlignment.Center });
         rtitle.Children.Add(new TextBlock { Text = "Quick actions", Style = StyleOf("SectionText"), Margin = Theme.GapLeftS2 });
         _rightHeader.Children.Add(rtitle);
         right.Children.Add(_rightHeader);
@@ -93,12 +84,11 @@ public sealed class HubPage : Grid
         right.Children.Add(_sliders);
         Children.Add(right);
 
-        // ---- Popovers: over the whole page (the dimmed rest closes them), card on the right half ----
+        // ---- Popovers: over the whole panel (they cover it edge to edge) ----
         _wifiPop = new Popover(Icons.Wifi, "Wi-Fi");
         _btPop = new Popover(Icons.Bluetooth, "Bluetooth");
         foreach (var pop in new[] { _wifiPop, _btPop })
         {
-            SetColumnSpan(pop, 3);
             Children.Add(pop);
             pop.Closed += () => { PerfLog.End(); RefreshStatus(); PopoverClosed?.Invoke(); };
         }
@@ -109,9 +99,8 @@ public sealed class HubPage : Grid
         vm.BluetoothDevices.Changed += RefreshStatus;
         SizeChanged += (_, e) =>
         {
-            double w = (e.NewSize.Width - Theme.S4) / 2;
-            _wifiPop.CardWidth = w;
-            _btPop.CardWidth = w;
+            _wifiPop.CardWidth = e.NewSize.Width;
+            _btPop.CardWidth = e.NewSize.Width;
         };
 
         vm.PropertyChanged += OnVmChanged;
@@ -147,17 +136,13 @@ public sealed class HubPage : Grid
         return was;
     }
 
-    public HistoryPanel History { get; }
+    /// <summary>The panel's blocks, for the pop-up's staggered entrance.</summary>
+    public IReadOnlyList<FrameworkElement> Blocks => new FrameworkElement[] { _rightHeader, _tiles, _sliders };
 
-    /// <summary>Blocks for the notch's staggered entrance.</summary>
-    public IEnumerable<(FrameworkElement element, int order)> StaggerBlocks =>
-        History.StaggerBlocks.Concat(new (FrameworkElement, int)[] { (_rightHeader, 1), (_tiles, 2), (_sliders, 3) });
-
-    /// <summary>Called when the page comes into view: fresh ages and live values.</summary>
+    /// <summary>Called when the pop-up opens on this panel: live values.</summary>
     public void OnShown()
     {
         _vm.Refresh();
-        History.OnShown();
         // Warm the popups' caches in the background so their first open has content.
         _ = WarmAsync();
     }

@@ -16,18 +16,20 @@ public sealed class SettingsViewModel : ObservableObject
                              UpdateService updates, FontService fonts, ThemeService theme)
     {
         ApiKey = new ApiKeyTabViewModel(secrets, claude);
-        Pages = new PagesTabViewModel(pages);
+        Layout = new Views.LayoutTabViewModel(pages, settings);
         Focus = new FocusTabViewModel(settings, timer);
-        General = new GeneralTabViewModel(settings, fonts);
+        General = new GeneralTabViewModel(settings, fonts, pages);
         Pills = new PillsTabViewModel(settings);
         Updates = new UpdatesTabViewModel(settings, updates);
         Customisation = new CustomisationTabViewModel(settings, theme, fonts);
+        PaletteTab = new Views.PaletteTabViewModel(settings);
         Tabs = new ObservableCollection<SettingsTab>
         {
             new("General", Icons.Settings, General),
             new("Customisation", Icons.Palette, Customisation),
             new("Claude API key", Icons.Key, ApiKey),
-            new("Pages", Icons.Shelf, Pages),
+            new("Layout", Icons.Dashboard, Layout),
+            new("Command Palette", Icons.Search, PaletteTab),
             new("Pills", Icons.Bell, Pills),
             new("Focus Timer", Icons.Timer, Focus),
             new("Updates", Icons.UpdateArrow, Updates),
@@ -37,12 +39,13 @@ public sealed class SettingsViewModel : ObservableObject
 
     public ObservableCollection<SettingsTab> Tabs { get; }
     public ApiKeyTabViewModel ApiKey { get; }
-    public PagesTabViewModel Pages { get; }
+    public Views.LayoutTabViewModel Layout { get; }
     public FocusTabViewModel Focus { get; }
     public GeneralTabViewModel General { get; }
     public PillsTabViewModel Pills { get; }
     public UpdatesTabViewModel Updates { get; }
     public CustomisationTabViewModel Customisation { get; }
+    public Views.PaletteTabViewModel PaletteTab { get; }
 
     /// <summary>Selects the Updates tab (tray "Check for updates…", update pill).</summary>
     public void SelectUpdates() => SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, Updates));
@@ -136,80 +139,6 @@ public sealed class ApiKeyTabViewModel : ObservableObject
         try { Process.Start(new ProcessStartInfo(AppConfig.ApiKeyPageUrl) { UseShellExecute = true }); }
         catch { /* no default browser */ }
     }
-}
-
-/// <summary>"Pages" tab: one row per notch page with an on/off switch (reads/writes the PageRegistry).</summary>
-public sealed class PagesTabViewModel : ObservableObject
-{
-    private readonly DispatcherQueueTimer _messageTimer;
-
-    private readonly PageRegistry _registry;
-    private readonly Dictionary<PageId, PageRowViewModel> _rowById;
-
-    public PagesTabViewModel(PageRegistry registry)
-    {
-        _registry = registry;
-        _rowById = PageRegistry.All.ToDictionary(p => p.Id, p => new PageRowViewModel(p, registry, this));
-        _messageTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
-        _messageTimer.IsRepeating = false;
-        _messageTimer.Interval = TimeSpan.FromSeconds(2.5);
-        _messageTimer.Tick += (_, _) => { _messageTimer.Stop(); Message = ""; };
-        registry.Changed += () => { foreach (var r in _rowById.Values) r.Refresh(); OnPropertyChanged(nameof(Rows)); };
-    }
-
-    /// <summary>Rows in the user's page order (the registry's order).</summary>
-    public IReadOnlyList<PageRowViewModel> Rows => _registry.Ordered.Select(p => _rowById[p.Id]).ToList();
-
-    /// <summary>Moves a page to a new position (drag or Alt+↑ / Alt+↓). Saved immediately; the notch follows live.</summary>
-    public void Move(PageRowViewModel row, int index) => _registry.Move(row.Page.Id, index);
-
-    private string _message = "";
-    public string Message { get => _message; private set => Set(ref _message, value); }
-
-    internal void ShowMessage(string text)
-    {
-        Message = text;
-        _messageTimer.Stop();
-        _messageTimer.Start();
-    }
-}
-
-public sealed class PageRowViewModel : ObservableObject
-{
-    private readonly PageRegistry _registry;
-    private readonly PagesTabViewModel _owner;
-
-    public PageRowViewModel(PageDefinition page, PageRegistry registry, PagesTabViewModel owner)
-    {
-        Page = page;
-        _registry = registry;
-        _owner = owner;
-    }
-
-    public PageDefinition Page { get; }
-    public string Name => Page.Name;
-    public string Description => Page.Description;
-    public string Icon => Page.Icon;
-    public bool UseClaudeLogo => Page.UseClaudeLogo;
-
-    /// <summary>Bumped to make the switch shake when the last page can't be turned off.</summary>
-    private int _shake;
-    public int ShakeToken { get => _shake; private set => Set(ref _shake, value); }
-
-    public bool IsEnabled
-    {
-        get => _registry.IsEnabled(Page.Id);
-        set
-        {
-            if (_registry.TrySetEnabled(Page.Id, value)) return;
-            // Refused (last page): keep the switch on, shake it, explain.
-            ShakeToken++;
-            _owner.ShowMessage("Keep at least one page on");
-            DispatcherQueue.GetForCurrentThread().TryEnqueue(() => OnPropertyChanged(nameof(IsEnabled)));
-        }
-    }
-
-    internal void Refresh() => OnPropertyChanged(nameof(IsEnabled));
 }
 
 /// <summary>
@@ -362,11 +291,58 @@ public sealed class GeneralTabViewModel : ObservableObject
 {
     private readonly SettingsService _settings;
 
-    public GeneralTabViewModel(SettingsService settings, FontService fonts)
+    private readonly PageRegistry _pages;
+
+    public GeneralTabViewModel(SettingsService settings, FontService fonts, PageRegistry pages)
     {
         _settings = settings;
+        _pages = pages;
         Fonts = fonts;
         fonts.FontChanged += _ => OnPropertyChanged(nameof(CurrentFont));
+        pages.Changed += () => OnPropertyChanged(nameof(ScreenshotShelf));
+    }
+
+    // ---- Spotify (the media player's Like button) ----
+    /// <summary>Set by the app after start-up.</summary>
+    public SpotifyService? Spotify { get; set; }
+
+    public string SpotifyClientId
+    {
+        get => _settings.Current.SpotifyClientId ?? "";
+        set { var v = value.Trim(); if (v != SpotifyClientId) _settings.Update(s => s.SpotifyClientId = v.Length == 0 ? null : v); }
+    }
+
+    // ---- Screenshot shelf ----
+    /// <summary>On = new screenshots land in the notch (and the Screenshots page is shown); off = neither.</summary>
+    public bool ScreenshotShelf
+    {
+        get => _settings.Current.ScreenshotShelf && _pages.IsShown(PageId.Screenshots);
+        set
+        {
+            if (value == ScreenshotShelf) return;
+            _settings.Update(s => s.ScreenshotShelf = value);
+            if (!_pages.TrySetEnabled(PageId.Screenshots, value)) _settings.Update(s => s.ScreenshotShelf = true); // it's the only page left
+            OnPropertyChanged();
+        }
+    }
+
+    public bool ScreenshotAutoOpen
+    {
+        get => _settings.Current.ScreenshotAutoOpen;
+        set { if (value != ScreenshotAutoOpen) { _settings.Update(s => s.ScreenshotAutoOpen = value); OnPropertyChanged(); } }
+    }
+
+    public int ScreenshotKeep
+    {
+        get => _settings.Current.ScreenshotKeep;
+        set { if (value != ScreenshotKeep) { _settings.Update(s => s.ScreenshotKeep = Math.Clamp(value, 3, 30)); OnPropertyChanged(); } }
+    }
+
+    /// <summary>Where Save puts copies (empty = the Windows Screenshots folder).</summary>
+    public string ScreenshotSaveFolder
+    {
+        get => string.IsNullOrWhiteSpace(_settings.Current.ScreenshotSaveFolder) ? ScreenshotService.ScreenshotsFolder : _settings.Current.ScreenshotSaveFolder!;
+        set { _settings.Update(s => s.ScreenshotSaveFolder = string.Equals(value, ScreenshotService.ScreenshotsFolder, StringComparison.OrdinalIgnoreCase) ? null : value); OnPropertyChanged(); }
     }
 
     public FontService Fonts { get; }

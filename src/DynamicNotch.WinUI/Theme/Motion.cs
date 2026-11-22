@@ -146,12 +146,13 @@ public static class Motion
     public const double PreviewStartScale = 0.6;
 
     // ---- Settings window ---------------------------------------------------------------------
-    public static readonly SpringPreset WindowOpen = SpringPreset.FromResponse(0.36, 0.8);
-    public static readonly SpringPreset TabHighlight = SpringPreset.FromResponse(0.38, 0.82);
-    public const double WindowStartScale = 0.94;
-    /// <summary>Settings: the tab bar's trailing end (slower than TabHighlight, so the bar stretches between tabs) and how far the window rises as it opens.</summary>
-    public static readonly SpringPreset TabTrail = SpringPreset.FromResponse(0.56, 0.9);
-    public const double WindowRise = 14;
+    // Short and ease-out (critically damped or close to it): settles in ~250 ms with no visible bounce.
+    public static readonly SpringPreset WindowOpen = SpringPreset.FromResponse(0.3, 1.0);
+    public static readonly SpringPreset TabHighlight = SpringPreset.FromResponse(0.28, 0.9);
+    public const double WindowStartScale = 0.97;
+    /// <summary>Settings: the tab line's trailing end (a little slower than TabHighlight, so the line stretches slightly between tabs) and how far the window rises as it opens.</summary>
+    public static readonly SpringPreset TabTrail = SpringPreset.FromResponse(0.36, 1.0);
+    public const double WindowRise = 8;
 
     // ---- Page navigator ------------------------------------------------------------------------------
     /// <summary>Dots ⇄ icons morph: soft with a small overshoot.</summary>
@@ -228,6 +229,45 @@ public static class Motion
     // ---- Quick-action popovers ------------------------------------------------------------------------------
     /// <summary>The popover springing out of its tile (and back).</summary>
     public static readonly SpringPreset PopoverOpen = SpringPreset.FromResponse(0.38, 0.84);
+    /// <summary>Header pop-up (Notifications / Quick actions): how small it starts as it grows out of its icon, the panel swap spring and slide.</summary>
+    public const double HeaderPopupStartScale = 0.55, HeaderPanelSlide = 14;
+    /// <summary>Header pop-ups (Notifications, Quick actions, Ask, the command palette) slide in from the right this far, ease-out spring.</summary>
+    public const double HeaderPopupSlide = 56;
+    public static readonly SpringPreset HeaderPopupOpen = SpringPreset.FromResponse(0.34, 0.9);
+    public static readonly SpringPreset HeaderPopupClose = SpringPreset.FromResponse(0.24, 1.0);
+    public static readonly SpringPreset HeaderPanelSwap = SpringPreset.FromResponse(0.3, 0.92);
+
+    // ---- Media controls ----
+    /// <summary>Play ⇄ pause glyph morph, the next / previous nudge, a new track sliding in, the Like heart filling and popping.</summary>
+    /// <summary>The seek bar glides over one playback-clock tick.</summary>
+    public const int SeekGlideMs = 260;
+    public static readonly SpringPreset PlayMorph = SpringPreset.FromResponse(0.32, 0.8);
+    public static readonly SpringPreset Nudge = SpringPreset.FromResponse(0.32, 0.55);
+    public static readonly SpringPreset TrackSlide = SpringPreset.FromResponse(0.42, 0.9);
+    public static readonly SpringPreset HeartFill = SpringPreset.FromResponse(0.34, 0.72);
+    public static readonly SpringPreset HeartPop = SpringPreset.FromResponse(0.42, 0.42);
+
+    // ---- Command palette ----
+    /// <summary>The selection highlight gliding between rows, rows fading / sliding in one after another (seconds apart).</summary>
+    public static readonly SpringPreset PaletteHighlight = SpringPreset.FromResponse(0.22, 0.86);
+    public static readonly SpringPreset PaletteRowIn = SpringPreset.FromResponse(0.24, 0.95);
+    public const double PaletteRowStagger = 0.018;
+    /// <summary>How long the "Copied" check / a launched app's icon pop show before the palette closes (ms).</summary>
+    public const int PaletteCopiedMs = 420, PaletteLaunchMs = 170;
+    /// <summary>The palette shrinks only after typing pauses this long (it grows at once), so the notch doesn't bounce per key.</summary>
+    public const int PaletteShrinkDelayMs = 260;
+    /// <summary>The palette's bottom glow settling back after a reaction.</summary>
+    public static readonly SpringPreset PaletteGlow = SpringPreset.FromResponse(0.45, 0.85);
+
+    // ---- Screenshot shelf ----
+    /// <summary>A new screenshot drops into the preview: an underdamped spring, so it lands with a little bounce.</summary>
+    public static readonly SpringPreset ShotDrop = SpringPreset.FromResponse(0.46, 0.62);
+    public const double ShotDropDistance = 26;
+    /// <summary>The action buttons slide in after it, one after another (seconds).</summary>
+    public static readonly SpringPreset ShotAction = SpringPreset.FromResponse(0.32, 0.86);
+    public const double ShotActionDelay = 0.14, ShotActionStagger = 0.045;
+    /// <summary>How long a confirmation ("Copied") stays, and how long the notch stays open on its own after a new screenshot.</summary>
+    public const int ShotToastMs = 1800, ShotPeekMs = 4500;
     /// <summary>Closing is quicker than opening and never overshoots.</summary>
     public static readonly SpringPreset PopoverClose = SpringPreset.FromResponse(0.22, 1.0);
     public const double PopoverStartScale = 0.6;

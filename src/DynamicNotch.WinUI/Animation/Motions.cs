@@ -42,6 +42,20 @@ public static class Motions
         el.PointerCaptureLost += (_, _) => spring.SetTarget(1, Motion.Press);
     }
 
+    /// <summary>When layout moves <paramref name="el"/> (a reorder, a neighbour removed), it glides to its new spot.</summary>
+    public static void SlideIntoPlace(UIElement el, double ms = 260)
+    {
+        var v = Anim.VisualOf(el);
+        var c = v.Compositor;
+        var offset = c.CreateVector3KeyFrameAnimation();
+        offset.Target = "Offset";
+        offset.InsertExpressionKeyFrame(1, "this.FinalValue", c.CreateCubicBezierEasingFunction(new System.Numerics.Vector2(0.2f, 0.9f), new System.Numerics.Vector2(0.3f, 1f)));
+        offset.Duration = TimeSpan.FromMilliseconds(ms);
+        var set = c.CreateImplicitAnimationCollection();
+        set["Offset"] = offset;
+        v.ImplicitAnimations = set;
+    }
+
     /// <summary>A hover fill whose opacity springs 0 ⇄ 1 while <paramref name="source"/> is under the pointer.</summary>
     public static CompSpring HoverFade(UIElement source, UIElement fill, Func<bool>? enabled = null)
     {

@@ -112,7 +112,28 @@ public sealed class SeekBar : Grid
     public double Value
     {
         get => _value;
-        set { _value = value; if (!_dragging) _p.InsertScalar("V", (float)Math.Clamp(value, 0, 1)); }
+        set
+        {
+            double previous = _value;
+            _value = value;
+            if (_dragging) return;
+            float v = (float)Math.Clamp(value, 0, 1);
+            // Small forward steps (the playback clock ticks every 250 ms) glide linearly to the next value, so
+            // the fill moves continuously; jumps (a seek, a new track) land at once.
+            double step = value - previous;
+            if (Anim.Enabled && step > 0 && step < 0.02)
+            {
+                var a = _p.Compositor.CreateScalarKeyFrameAnimation();
+                a.InsertKeyFrame(1, v, _p.Compositor.CreateLinearEasingFunction());
+                a.Duration = TimeSpan.FromMilliseconds(Motion.SeekGlideMs);
+                _p.StartAnimation("V", a);
+            }
+            else
+            {
+                _p.StopAnimation("V");
+                _p.InsertScalar("V", v);
+            }
+        }
     }
 
     public bool IsSeekable

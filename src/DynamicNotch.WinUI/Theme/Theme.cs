@@ -223,20 +223,25 @@ public static class Theme
     public const double SettingsDragBandHeight = 44;
     public const double SettingsFieldHeight = 36;
     public const double SettingsShadowBlur = 30, SettingsShadowOffsetY = 10, SettingsShadowOpacity = 0.6;
-    /// <summary>The Settings card's surface: a near-black vertical gradient (depth without a live blur).</summary>
-    public static readonly Color SettingsSurfaceTop = Rgb(0x13, 0x13, 0x17), SettingsSurfaceBottom = Rgb(0x07, 0x07, 0x09);
-    /// <summary>The sidebar's slightly raised panel.</summary>
-    public static readonly Color SidebarColor = Argb(0x0A, 0xFF, 0xFF, 0xFF);
-    /// <summary>Settings cards: a faintly lit top fading down, with a brighter top edge.</summary>
-    public static readonly Color CardSurfaceTop = Argb(0x10, 0xFF, 0xFF, 0xFF), CardSurfaceBottom = Argb(0x06, 0xFF, 0xFF, 0xFF);
+    /// <summary>The Settings card's surface: pure black, top to bottom (sidebar and header included).</summary>
+    public static readonly Color SettingsSurfaceTop = Rgb(0x00, 0x00, 0x00), SettingsSurfaceBottom = Rgb(0x00, 0x00, 0x00);
+    /// <summary>The sidebar sits on the same black (a hairline divides it from the content).</summary>
+    public static readonly Color SidebarColor = Argb(0x00, 0xFF, 0xFF, 0xFF);
+    /// <summary>Settings cards: one flat, subtle dark grey on the black page.</summary>
+    public static readonly Color CardSurfaceTop = Argb(0x0F, 0xFF, 0xFF, 0xFF), CardSurfaceBottom = Argb(0x0F, 0xFF, 0xFF, 0xFF);
+    /// <summary>The Settings window's outline, the sidebar's selected-tab fill and the selected-tab line (plain white).</summary>
+    public static readonly Color SettingsBorderColor = Argb(0x1C, 0xFF, 0xFF, 0xFF), SettingsTabFillColor = Argb(0x12, 0xFF, 0xFF, 0xFF), SettingsIndicatorColor = Rgb(0xFF, 0xFF, 0xFF);
+    public static SolidColorBrush SettingsBorderBrush { get; private set; } = null!;
+    public static SolidColorBrush SettingsTabFillBrush { get; private set; } = null!;
+    public static SolidColorBrush SettingsIndicatorBrush { get; private set; } = null!;
     public static LinearGradientBrush SettingsSurfaceBrush { get; private set; } = null!;
     public static SolidColorBrush SidebarBrush { get; private set; } = null!;
     public static LinearGradientBrush CardSurfaceBrush { get; private set; } = null!;
     public static LinearGradientBrush CardEdgeBrush { get; private set; } = null!;
     /// <summary>Settings tab indicator: row slot, the accent bar beside the selected tab and the content's entrance stagger.</summary>
     public const double SettingsTabBarWidth = 3, SettingsTabBarHeight = 16;
-    public const int SettingsEntranceStepMs = 32, SettingsEntranceMax = 10;
-    public const double SettingsEntranceRise = 12;
+    public const int SettingsEntranceStepMs = 24, SettingsEntranceMax = 8, SettingsEntranceMs = 240;
+    public const double SettingsEntranceRise = 8;
 
     // ---- Settings padding: one set of rules for every tab, button, field, chip and card ----------------
     /// <summary>
@@ -353,6 +358,19 @@ public static class Theme
     // ---- Quick-action popovers (Wi-Fi, Bluetooth) --------------------------------------------------------
     public static readonly Thickness PopoverPadding = new(S3, S3, S3, S2);
     public const double PopoverIconTile = 28, PopRowHeight = 44, PopoverDimOpacity = 0.55;
+    /// <summary>The header pop-up card (Notifications / Quick actions) and the header icons' gap.</summary>
+    public const double HeaderPopupWidth = 340, HeaderPopupDimOpacity = 0.5, HeaderIconGap = 2, HeaderBadgeSize = 7;
+    public static readonly Thickness HeaderPopupPadding = new(S3, S3, S3, S3);
+    /// <summary>Room inside the pop-up card for a page-sized feature (the pager + footer area minus the card's padding).</summary>
+    public const double HeaderPopupInnerHeight = ExpandedContentHeight - HeaderHeight - S2 - 2 * S3 - 2;
+
+    // ---- Command palette (in the notch) --------------------------------------------------------------
+    public const double PaletteWidth = 600, PaletteBarHeight = 40, PaletteRowHeight = 44, PaletteAnswerHeight = 58, PaletteIconTile = 30;
+    public const double PaletteMinHeight = 64, PaletteAskMaxHeight = 230, FontPaletteInput = 17, FontPaletteAnswer = 20;
+    public static readonly Thickness PalettePadding = new(S3, S3, S3, S2);
+
+    // ---- Page: Screenshots (the screenshot shelf) ----------------------------------------------------
+    public const double ShotPreviewWidth = 210, ShotPreviewHeight = 118, ShotActionHeight = 30, ShotThumbWidth = 96, ShotThumbHeight = 54;
     public const double PopoverShadowBlur = 24, PopoverShadowOffsetY = 8, PopoverShadowOpacity = 0.7;
     /// <summary>The connected network / device row's faint fill.</summary>
     public static readonly Color PopRowActiveColor = Argb(0x14, 0xFF, 0xFF, 0xFF);
@@ -546,8 +564,11 @@ public static class Theme
         CardSurfaceBrush.GradientStops[0].Color = CardSurfaceTop;
         CardSurfaceBrush.GradientStops[1].Color = CardSurfaceBottom;
         CardEdgeBrush = Linear(0, 0, 0, 1);
-        CardEdgeBrush.GradientStops[0].Color = Argb(0x24, 0xFF, 0xFF, 0xFF);
-        CardEdgeBrush.GradientStops[1].Color = Argb(0x0C, 0xFF, 0xFF, 0xFF);
+        CardEdgeBrush.GradientStops[0].Color = Argb(0x12, 0xFF, 0xFF, 0xFF);
+        CardEdgeBrush.GradientStops[1].Color = Argb(0x12, 0xFF, 0xFF, 0xFF);
+        SettingsBorderBrush = new SolidColorBrush(SettingsBorderColor);
+        SettingsTabFillBrush = new SolidColorBrush(SettingsTabFillColor);
+        SettingsIndicatorBrush = new SolidColorBrush(SettingsIndicatorColor);
         TransparentBrush = new SolidColorBrush(Argb(0, 0, 0, 0));
         CardBrush = new SolidColorBrush(CardColor);
         CardBorderBrush = new SolidColorBrush(CardBorderColor);

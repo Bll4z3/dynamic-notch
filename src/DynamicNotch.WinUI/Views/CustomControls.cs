@@ -214,22 +214,14 @@ internal sealed class Segmented : Grid
         double inner = TrackHeight - 2 * Inset;
         _highlight.HorizontalAlignment = HorizontalAlignment.Left;
         _highlight.CornerRadius = new CornerRadius(inner / 2);
-        _highlight.Background = Theme.AccentTintBrush;
-        _highlight.BorderBrush = Theme.AccentBorderBrush;
-        _highlight.BorderThickness = new Thickness(1);
+        // The selected segment: a plain lighter-grey pill (no tint, sheen or glow), quiet on the black Settings page.
+        _highlight.Background = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
         _highlight.IsHitTestVisible = false;
-        // A faint top sheen makes the highlight read as raised.
-        var sheen = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
-        sheen.GradientStops.Add(new GradientStop { Offset = 0, Color = Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF) });
-        sheen.GradientStops.Add(new GradientStop { Offset = 0.6, Color = Color.FromArgb(0, 0xFF, 0xFF, 0xFF) });
-        _shine.Background = sheen;
         _shine.CornerRadius = _highlight.CornerRadius;
         _shine.HorizontalAlignment = HorizontalAlignment.Left;
         _shine.IsHitTestVisible = false;
-        // A soft accent glow under the selected segment (rides with the highlight).
         _glow.HorizontalAlignment = HorizontalAlignment.Left;
-        _glow.Background = Theme.AccentHaloBrush;
-        _glow.Opacity = 0.45;
+        _glow.Visibility = Visibility.Collapsed;
         _glow.IsHitTestVisible = false;
         Children.Add(_glow);
         Children.Add(_highlight);

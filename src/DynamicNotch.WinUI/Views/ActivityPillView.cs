@@ -30,6 +30,7 @@ public sealed class ActivityPillView : Grid
     private readonly Border _capsule = new();
     private readonly Ellipse _glow = new();
     private readonly RadialGradientBrush _glowBrush = new();
+    private Color? _glowColor;
     private readonly VectorIcon _icon = new(), _sunCore = new(), _sunRays = new(), _lockBody = new(), _lockShackle = new();
     private readonly StackPanel _center = new() { VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _title = new(), _subtitle = new(), _value = new(), _upperA = new(), _lowerA = new(), _actionText = new();
@@ -297,6 +298,9 @@ public sealed class ActivityPillView : Grid
         _track.Visibility = slider || a.Kind == ActivityKind.Download && !a.On ? Visibility.Visible : Visibility.Collapsed;
         _track.Interactive = slider && a.OnSet != null;
         _track.Margin = slider ? new Thickness(0) : new Thickness(0, 2, 0, -4);
+        // Volume / brightness show only their level: clear any line left over from the pill shown before
+        // (the low-battery pill's "Plug in soon" used to stay above the volume / brightness track).
+        if (slider) SetSubtitle(null);
 
         // Caps / brightness springs start from the state being shown (no animation from a stale state).
         if (caps)
@@ -410,8 +414,16 @@ public sealed class ActivityPillView : Grid
 
     private void SetGlow(Color color, double level, bool pulse)
     {
-        _glowBrush.GradientStops[0].Color = Color.FromArgb(0xD0, color.R, color.G, color.B);
-        _glowBrush.GradientStops[1].Color = Color.FromArgb(0, color.R, color.G, color.B);
+        // A fresh brush per colour: editing a RadialGradientBrush's stops after it has rendered doesn't reach the
+        // compositor, so the glow kept its first colour (the Caps Lock amber) and charging glowed yellow.
+        if (_glowColor != color)
+        {
+            _glowColor = color;
+            var brush = new RadialGradientBrush();
+            brush.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0xD0, color.R, color.G, color.B), Offset = 0 });
+            brush.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0, color.R, color.G, color.B), Offset = 1 });
+            _glow.Fill = brush;
+        }
         _glowLevel.SetTarget(level, Motion.GlowDim);
         var gv = Anim.VisualOf(_glow);
         if (pulse && Anim.Enabled)

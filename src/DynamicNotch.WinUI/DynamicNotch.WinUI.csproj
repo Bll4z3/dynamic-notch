@@ -39,6 +39,7 @@
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.2" />
     <!-- Clock / battery listen to SystemEvents (part of the WPF/WinForms framework, separate for WinUI). -->
     <PackageReference Include="Microsoft.Win32.SystemEvents" Version="8.0.0" />
+    <PackageReference Include="System.Data.OleDb" Version="8.0.1" />
     <!-- Laptop panel brightness (WMI rootwmi): level, change events and set. -->
     <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>

@@ -51,10 +51,8 @@ internal sealed class NotchPreview : Grid
         BorderBrush = Theme.CardBorderBrush;
         BorderThickness = new Thickness(1);
 
-        // "Screen" behind the notch: a faint wallpaper-like gradient so the black notch reads.
-        var wall = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(1, 1) };
-        wall.GradientStops.Add(new GradientStop { Offset = 0, Color = Color.FromArgb(255, 0x1B, 0x1D, 0x2A) });
-        wall.GradientStops.Add(new GradientStop { Offset = 1, Color = Color.FromArgb(255, 0x12, 0x14, 0x1C) });
+        // "Screen" behind the notch: a flat neutral dark grey, light enough that the black notch reads on it.
+        var wall = new SolidColorBrush(Color.FromArgb(255, 0x18, 0x18, 0x1A));
         Children.Add(new Border { Background = wall, CornerRadius = Theme.Radius, IsHitTestVisible = false });
 
         _stage.IsHitTestVisible = false;

@@ -91,6 +91,8 @@ public sealed partial class NotchWindow : Window
         BuildFocus();
         BuildActivity();
         BuildHub();
+        BuildScreenshots();
+        BuildOverlays();
         UpdateGlowColor(animate: false);
         // Any click on the notch pins it, including clicks that a button inside it handles.
         NotchRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Notch_PointerPressed), handledEventsToo: true);
@@ -161,6 +163,7 @@ public sealed partial class NotchWindow : Window
         ReassertTopmost();
         _shadowWindow?.Show(_hwnd);
         UpdateHotkey();
+        UpdatePaletteHotkey();
     }
 
     public void CloseNotch()
@@ -170,6 +173,8 @@ public sealed partial class NotchWindow : Window
         _foregroundHookHandle = IntPtr.Zero;
         if (_hotkeyRegistered && _messages != null) Native.UnregisterHotKey(_messages.Handle, AskHotkeyId);
         _hotkeyRegistered = false;
+        if (_paletteHotkeyRegistered && _messages != null) Native.UnregisterHotKey(_messages.Handle, PaletteHotkeyId);
+        _paletteHotkeyRegistered = false;
         _messages?.Dispose();
         _messages = null;
         _shadowWindow?.Close();
@@ -213,6 +218,9 @@ public sealed partial class NotchWindow : Window
                 break;
             case Native.WM_HOTKEY when wParam.ToInt32() == AskHotkeyId:
                 Ui.Post(OnAskHotkey);
+                break;
+            case Native.WM_HOTKEY when wParam.ToInt32() == PaletteHotkeyId:
+                Ui.Post(OnPaletteHotkey);
                 break;
         }
     }
@@ -344,7 +352,6 @@ public sealed partial class NotchWindow : Window
         // Pills wait while the notch is open or an activity pill is up; they resume (with a fresh timer) after.
         Vm.HoldPill(next is NotchState.Expanded or NotchState.Activity || _hint);
         if (next == NotchState.Expanded && Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
-        if (next == NotchState.Expanded && Vm.CurrentPage == PageId.Hub) _frame.Hub.OnShown();
         // An activity pill that ended under the pointer: carry on as a normal hover (open after the usual delay).
         if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; Restart(_expandTimer, HoverDelayMs); }
         if (prev == NotchState.Expanded && next != NotchState.Expanded)
@@ -352,7 +359,8 @@ public sealed partial class NotchWindow : Window
             Unpin();
             _frame.Shelf.ClosePreview();
             _frame.Preview.SetShown(false);
-            _frame.Hub.ClosePopover();
+            _frame.Popup.CloseAll();
+            ResetOverlayOnCollapse();
             if (!_selecting)
             {
                 Vm.Ask.CancelIfBusy();     // collapsing with a request in flight cancels it
@@ -363,9 +371,9 @@ public sealed partial class NotchWindow : Window
     }
 
     /// <summary>Expanded size for the current page: Ask sizes itself to its state and content.</summary>
-    private (double Width, double Height) ExpandedTarget() => Vm.IsAskPage
-        ? _frame.Ask.DesiredNotchSize
-        : (Theme.ExpandedWidth, Vm.IsMusicPage ? Theme.MusicExpandedHeight : Theme.ExpandedHeight);
+    private (double Width, double Height) ExpandedTarget() => Vm.IsAskPage ? _frame.Ask.DesiredNotchSize
+        : Vm.IsPaletteOpen ? _frame.Palette.DesiredNotchSize
+        : (Theme.ExpandedWidth, Vm.IsMusicPage && !_frame.Popup.IsOpen ? Theme.MusicExpandedHeight : Theme.ExpandedHeight);
 
     private void ApplyTargets(bool immediate = false)
     {
@@ -383,7 +391,7 @@ public sealed partial class NotchWindow : Window
         {
             case NotchState.Expanded:
                 (w, h) = expanded;
-                if (Vm.IsAskPage && _expandedRevealed) preset = Motion.AskResize;
+                if ((Vm.IsAskPage || Vm.IsPaletteOpen) && _expandedRevealed) preset = Motion.AskResize;
                 break;
             case NotchState.Pill:
                 w = Theme.PillWidth; h = Theme.PillHeight; preset = Motion.Pop; // pop with a little overshoot
@@ -426,7 +434,7 @@ public sealed partial class NotchWindow : Window
         PillLayer.IsHitTestVisible = _state == NotchState.Pill && !_hint;
         ActivityLayer.IsHitTestVisible = _state == NotchState.Activity;
         UpdateCompactActivity();
-        _frame.SetAskActive(_state == NotchState.Expanded && Vm.IsAskPage);
+        _frame.SetSurfaces(_state == NotchState.Expanded && Vm.IsAskPage, _state == NotchState.Expanded && Vm.IsPaletteOpen);
 
         Bars.IsPlaying = _state == NotchState.Collapsed && playing && !minimal && !timer;
         _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage, Vm.Music.IsPlaying);
@@ -558,10 +566,15 @@ public sealed partial class NotchWindow : Window
                 if (Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
                 else _frame.Shelf.ClosePreview();
                 if (!Vm.IsAskPage) _frame.Preview.SetShown(false);
-                if (!Vm.IsAskPage && _hasFocus) ReleaseFocus(restore: true); // no text boxes on the other pages
+                if (!Vm.IsAskPage && !Vm.IsPaletteOpen && _hasFocus) ReleaseFocus(restore: true); // no text boxes on the other pages
                 Vm.Music.IsVisible = _state == NotchState.Expanded && Vm.IsMusicPage;
-                if (_state == NotchState.Expanded && Vm.CurrentPage == PageId.Hub) _frame.Hub.OnShown();
-                if (Vm.CurrentPage != PageId.Hub) _frame.Hub.ClosePopover();
+                _frame.Popup.CloseAll(); // the pop-up belongs to the header of the page you were on
+                if (Vm.Overlay != NotchOverlay.None) SetOverlay(NotchOverlay.None);
+                if (_state == NotchState.Expanded) _frame.OnPageShown(Vm.CurrentPage);
+                // The palette as a page: a fresh box when you arrive, its glow fading when you leave.
+                if (Vm.CurrentPage == PageId.Palette) _frame.Palette.Reset(focus: false);
+                else if (Vm.Overlay != NotchOverlay.Palette) { _frame.Palette.Hidden(); Vm.Palette.Closed(); }
+                if (Vm.CurrentPage == PageId.Screenshots) _frame.Screenshots.OnShown();
                 ApplyTargets(); // the notch height differs per page
                 break;
             case nameof(MainViewModel.CurrentPill):
@@ -586,11 +599,6 @@ public sealed partial class NotchWindow : Window
 
     private void OnPagesReconfigured(double from, bool currentRemoved)
     {
-        if (!Vm.Pages.IsEnabled(PageId.Ask))
-        {
-            Vm.Ask.CancelIfBusy();
-            if (_hasFocus) ReleaseFocus(restore: true);
-        }
         _frame.SetPages();
         ApplyDropTarget();
         _page.Snap(from); // same visual spot in the new layout; PageIndex then springs on from here
@@ -774,7 +782,7 @@ public sealed partial class NotchWindow : Window
     private void UpdateHotkey()
     {
         if (_messages == null) return;
-        bool want = Vm.Pages.IsEnabled(PageId.Ask);
+        bool want = true; // Ask is always available (its header icon can be hidden, the hotkey stays)
         if (want && !_hotkeyRegistered)
         {
             _hotkeyRegistered = Native.RegisterHotKey(_messages.Handle, AskHotkeyId, AppConfig.AskHotkeyModifiers, AppConfig.AskHotkeyVirtualKey);

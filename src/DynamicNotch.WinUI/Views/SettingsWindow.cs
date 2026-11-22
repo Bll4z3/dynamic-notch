@@ -40,7 +40,7 @@ internal sealed class SettingsWindow : Window
     private readonly IntPtr _hwnd;
     private readonly RootControl _root = new();
     private readonly Grid _card = new(), _shadowHost = new();
-    private readonly Border _tabHighlight = new(), _tabBar = new(), _tabGlow = new();
+    private readonly Border _tabHighlight = new(), _tabBar = new();
     private readonly List<(SettingsTab Tab, VectorIcon Icon, TextBlock Label)> _tabRows = new();
     private CompSpring _tabTrail = null!;
     private const double TabRowGap = 2;
@@ -80,27 +80,14 @@ internal sealed class SettingsWindow : Window
 
         // ---- Card: tab column | divider + content ----
         // The card fills the window (minus the shadow room), so resizing the window resizes it.
-        // Surface: a near-black vertical gradient with two faint accent "aurora" washes (top-left behind the
-        // sidebar, bottom-right in the dark tint). Static gradients drawn by the GPU, so they cost nothing
-        // while idle (a live backdrop blur behind a see-through, always-on-top window would).
+        // Surface: pure black everywhere (sidebar and header included), a faint grey hairline outline, no
+        // gradients or glows. Cards and controls inside sit on it in subtle dark greys.
         _card.Background = Theme.SettingsSurfaceBrush;
-        _card.BorderBrush = Theme.HighlightBorderBrush;
+        _card.BorderBrush = Theme.SettingsBorderBrush;
         _card.BorderThickness = new Thickness(1);
         _card.CornerRadius = Theme.Radius;
         _card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Theme.SettingsTabWidth) });
         _card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var aurora = new Grid();
-        aurora.Children.Add(new Border { Width = 620, Height = 480, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(-260, -240, 0, 0), Background = Theme.AccentAuroraBrush });
-        aurora.Children.Add(new Border { Width = 560, Height = 440, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, -240, -240), Background = Theme.AccentAuroraDarkBrush });
-        // A Border clips its child to its rounded corners, so the washes never spill past the card.
-        var auroraClip = new Border { CornerRadius = Theme.Radius, Child = aurora, IsHitTestVisible = false };
-        Grid.SetColumnSpan(auroraClip, 2);
-        _card.Children.Add(auroraClip);
-
-        // Sidebar: a slightly raised panel (left corners follow the radius token).
-        var sidebar = new Border { Background = Theme.SidebarBrush, CornerRadius = new CornerRadius(Theme.Radius.TopLeft, 0, 0, Theme.Radius.BottomLeft), IsHitTestVisible = false };
-        _card.Children.Add(sidebar);
 
         var tabs = new Grid { Margin = Theme.SettingsTabPadding };
         tabs.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -108,29 +95,19 @@ internal sealed class SettingsWindow : Window
         tabs.Children.Add(BrandHeader());
         var list = new Grid();
         Grid.SetRow(list, 1);
+        // The selected tab: a quiet grey pill, with a plain white line beside it; both slide to the new tab.
         _tabHighlight.Height = Theme.SettingsTabHeight;
         _tabHighlight.VerticalAlignment = VerticalAlignment.Top;
         _tabHighlight.CornerRadius = Theme.RadiusSmall;
-        _tabHighlight.Background = Theme.AccentTintBrush; // the selected tab carries the accent
-        _tabHighlight.BorderBrush = Theme.AccentBorderBrush;
-        _tabHighlight.BorderThickness = new Thickness(1);
+        _tabHighlight.Background = Theme.SettingsTabFillBrush;
         list.Children.Add(_tabHighlight);
-        // The accent bar beside the selected tab, with a soft halo; it stretches as it travels (see Motion below).
-        _tabGlow.Width = 18;
-        _tabGlow.Height = Theme.SettingsTabHeight;
-        _tabGlow.HorizontalAlignment = HorizontalAlignment.Left;
-        _tabGlow.VerticalAlignment = VerticalAlignment.Top;
-        _tabGlow.Margin = new Thickness(-Theme.S3, 0, 0, 0);
-        _tabGlow.Background = Theme.AccentHaloBrush;
-        _tabGlow.IsHitTestVisible = false;
-        list.Children.Add(_tabGlow);
         _tabBar.Width = Theme.SettingsTabBarWidth;
         _tabBar.Height = Theme.SettingsTabBarHeight;
         _tabBar.CornerRadius = new CornerRadius(Theme.SettingsTabBarWidth / 2);
         _tabBar.HorizontalAlignment = HorizontalAlignment.Left;
         _tabBar.VerticalAlignment = VerticalAlignment.Top;
         _tabBar.Margin = new Thickness(-(Theme.S2 - 1), (Theme.SettingsTabHeight - Theme.SettingsTabBarHeight) / 2, 0, 0);
-        _tabBar.Background = Theme.AccentBarBrush;
+        _tabBar.Background = Theme.SettingsIndicatorBrush;
         _tabBar.IsHitTestVisible = false;
         list.Children.Add(_tabBar);
         var rows = new StackPanel { Spacing = 2 };
@@ -146,12 +123,13 @@ internal sealed class SettingsWindow : Window
         // so opening Settings only builds the visible tab.
         _content = content;
         _factories[vm.ApiKey] = () => new ApiKeyTabView(vm.ApiKey);
-        _factories[vm.Pages] = () => new PagesTabView(vm.Pages);
+        _factories[vm.Layout] = () => new LayoutTabView(vm.Layout);
         _factories[vm.Focus] = () => new FocusTabView(vm.Focus);
         _factories[vm.General] = () => new GeneralTabView(vm.General);
         _factories[vm.Customisation] = () => new CustomisationTabView(vm.Customisation);
         _factories[vm.Pills] = () => new PillsTabView(vm.Pills);
         _factories[vm.Updates] = () => new UpdatesTabView(vm.Updates);
+        _factories[vm.PaletteTab] = () => new PaletteTabView(vm.PaletteTab);
         var close = new IconButton(26, Theme.IconSmall) { Icon = Icons.Close, Foreground = Theme.SecondaryText, Tooltip = "Close (Esc)", HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
         close.Click += AnimateClose;
         content.Children.Add(close);
@@ -219,16 +197,14 @@ internal sealed class SettingsWindow : Window
             v.StartAnimation("Translation", rise);
         }
         Anim.VisualOf(_tabHighlight, translation: true).StartAnimation("Translation", Anim.Expr(c, "Vector3(0, p.tab, 0)", ("p", props)));
-        // Elastic bar: spans from the trailing spring to the leading one (top-anchored scale), so a long jump
-        // stretches it like a droplet before it settles back to its resting height.
+        // The white line glides to the new tab with the pill; it stretches a touch while it travels (the
+        // trailing spring lags slightly) and settles back to its resting height.
         var bv = Anim.VisualOf(_tabBar, translation: true);
         bv.CenterPoint = Vector3.Zero;
         bv.StartAnimation("Translation", Anim.Expr(c, "Vector3(0, Min(p.tab, p.trail), 0)", ("p", props)));
         var stretch = Anim.Expr(c, "Vector3(1, (Abs(p.tab - p.trail) + B) / B, 1)", ("p", props));
         stretch.SetScalarParameter("B", (float)Theme.SettingsTabBarHeight);
         bv.StartAnimation("Scale", stretch);
-        var gv = Anim.VisualOf(_tabGlow, translation: true);
-        gv.StartAnimation("Translation", Anim.Expr(c, "Vector3(0, (p.tab + p.trail) / 2, 0)", ("p", props)));
         BuildShadow(c);
 
         _closeTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
@@ -417,7 +393,7 @@ internal sealed class SettingsWindow : Window
         foreach (var (tab, icon, label) in _tabRows)
         {
             bool on = ReferenceEquals(tab, _vm.SelectedTab);
-            icon.Foreground = on ? Theme.AccentReadableBrush : Theme.SecondaryText;
+            icon.Foreground = on ? Theme.PrimaryText : Theme.SecondaryText;
             label.Foreground = on ? Theme.PrimaryText : Theme.SecondaryText;
             label.FontFamily = on ? Theme.FontSemiBold : Theme.FontMedium;
             label.FontWeight = on ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Medium;
@@ -448,14 +424,14 @@ internal sealed class SettingsWindow : Window
             foreach (var child in panel.Children)
             {
                 if (child.Visibility != Visibility.Visible) continue;
-                if (view is not PagesTabView && child is ScrollViewer { Content: Panel inner })
+                if (view is not LayoutTabView && child is ScrollViewer { Content: Panel inner })
                     blocks.AddRange(inner.Children.Where(x => x.Visibility == Visibility.Visible));
                 else blocks.Add(child);
             }
         if (blocks.Count == 0) return;
         var c = Anim.VisualOf(view).Compositor;
-        var ease = c.CreateCubicBezierEasingFunction(new Vector2(0.2f, 0.85f), new Vector2(0.25f, 1f));
-        var duration = TimeSpan.FromMilliseconds(340 / Motion.Speed);
+        var ease = c.CreateCubicBezierEasingFunction(new Vector2(0.2f, 0.85f), new Vector2(0.25f, 1f)); // ease-out
+        var duration = TimeSpan.FromMilliseconds(Theme.SettingsEntranceMs / Motion.Speed);
         for (int i = 0; i < blocks.Count; i++)
         {
             var v = Anim.VisualOf(blocks[i], translation: true);
@@ -477,23 +453,25 @@ internal sealed class SettingsWindow : Window
         }
     }
 
-    /// <summary>App mark (an accent-gradient chip with a soft halo), the app name and "Settings".</summary>
+    /// <summary>
+    /// Minimal header: a small mark (a dark rounded tile holding a white notch silhouette), the app name and
+    /// "Settings" in soft grey. No colour and no glow, so it sits quietly on the black.
+    /// </summary>
     private static FrameworkElement BrandHeader()
     {
-        var g = new Grid { Margin = new Thickness(Theme.S1, 0, 0, Theme.S4) };
+        var g = new Grid { Margin = new Thickness(Theme.S2, Theme.S1, 0, Theme.S5) };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var mark = new Grid { Width = 30, Height = 30, VerticalAlignment = VerticalAlignment.Center };
-        mark.Children.Add(new Border { Width = 54, Height = 54, Margin = new Thickness(-12), Background = Theme.AccentHaloBrush, IsHitTestVisible = false });
-        mark.Children.Add(new Border
+        var mark = new Border
         {
-            CornerRadius = new CornerRadius(9), Background = Theme.AccentGradientBrush, BorderBrush = Theme.AccentBorderBrush, BorderThickness = new Thickness(1),
-            Child = new VectorIcon { Data = Icons.SparkleFilled, Size = Theme.IconSmall, Foreground = Theme.OnAccentBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
-        });
+            Width = 26, Height = 26, CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center,
+            Background = Theme.SettingsTabFillBrush, BorderBrush = Theme.SettingsBorderBrush, BorderThickness = new Thickness(1),
+            Child = new Border { Width = 12, Height = 5, CornerRadius = new CornerRadius(2.5), Background = Theme.SettingsIndicatorBrush, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 6, 0, 0) },
+        };
         g.Children.Add(mark);
-        var text = new StackPanel { Margin = new Thickness(Theme.S3 - 2, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Text = "Dynamic Notch", Style = AskPage.TextStyle("BaseText"), FontFamily = Theme.FontBold, FontWeight = Microsoft.UI.Text.FontWeights.Bold, FontSize = Theme.FontBody + 1 });
-        text.Children.Add(new TextBlock { Text = "Settings", Style = AskPage.TextStyle("CaptionText"), Foreground = Theme.SecondaryText });
+        var text = new StackPanel { Margin = new Thickness(Theme.S3 - 2, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Spacing = 0 };
+        text.Children.Add(new TextBlock { Text = "Dynamic Notch", Style = AskPage.TextStyle("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = Theme.FontBody });
+        text.Children.Add(new TextBlock { Text = "Settings", Style = AskPage.TextStyle("CaptionText"), Foreground = Theme.TertiaryText });
         Grid.SetColumn(text, 1);
         g.Children.Add(text);
         return g;

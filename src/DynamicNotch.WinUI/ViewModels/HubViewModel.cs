@@ -76,7 +76,14 @@ public sealed class HubViewModel : ObservableObject
             Glyph = p.Glyph ?? Icons.Bell, Logo = p.Logo, OnClick = p.OnClick,
         });
         while (History.Count > Theme.HubHistoryMax) History.RemoveAt(History.Count - 1);
+        UnreadCount = Math.Min(UnreadCount + 1, History.Count);
     }
+
+    private int _unread;
+    /// <summary>Notifications recorded since the Notifications pop-up was last opened (the header bell's dot).</summary>
+    public int UnreadCount { get => _unread; private set => Set(ref _unread, value); }
+    /// <summary>The Notifications pop-up was opened: everything in it counts as seen.</summary>
+    public void MarkRead() => UnreadCount = 0;
 
     public void Remove(HistoryItem item) => History.Remove(item);
 

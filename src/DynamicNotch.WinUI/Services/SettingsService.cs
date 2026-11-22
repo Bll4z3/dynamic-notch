@@ -45,6 +45,31 @@ public sealed class AppSettings
     // ---- Settings ▸ Customisation (accent, shape, motion, notch look, behaviour, performance) ----
     public CustomSettings Custom { get; set; } = new();
 
+    // ---- Screenshot shelf (Settings ▸ General) ----
+    /// <summary>New screenshots (Win+Shift+S, PrtScn) land in the notch's Screenshots page.</summary>
+    public bool ScreenshotShelf { get; set; } = true;
+    /// <summary>How many screenshots the shelf keeps (older ones drop off; their files stay where they are).</summary>
+    public int ScreenshotKeep { get; set; } = 10;
+    /// <summary>The notch springs open on a new screenshot (and closes again after a few seconds).</summary>
+    public bool ScreenshotAutoOpen { get; set; } = true;
+    /// <summary>Where Save puts a copy (null = the Windows Screenshots folder).</summary>
+    public string? ScreenshotSaveFolder { get; set; }
+
+    /// <summary>
+    /// The notch's layout (Settings ▸ Layout): every feature as a page, a header icon or hidden, in order (see
+    /// PageRegistry). It replaced the separate page list (PageOrder / DisabledPages) and header-icon list
+    /// (HeaderIconOrder / HiddenHeaderIcons), which are read once to carry old settings over.
+    /// </summary>
+    public List<LayoutItem> Layout { get; set; } = new();
+    public List<string> HeaderIconOrder { get; set; } = new();
+    public List<string> HiddenHeaderIcons { get; set; } = new();
+
+    // ---- Spotify (Settings ▸ General): your own Spotify app's Client ID, for the Like button ----
+    public string? SpotifyClientId { get; set; }
+
+    // ---- Command palette (Settings ▸ Command Palette) ----
+    public PaletteSettings Palette { get; set; } = new();
+
     // ---- Updates (Settings ▸ Updates) ----
     public bool AutoCheckUpdates { get; set; } = true;
     public DateTimeOffset? LastUpdateCheck { get; set; }
@@ -80,6 +105,12 @@ public sealed class SettingsService
         catch { Current = new AppSettings(); }
         Current.FocusRoutine = FocusRoutine.Sanitize(Current.FocusRoutine); // a hand-edited file can't break the timer
         Current.Custom = (Current.Custom ?? new CustomSettings()).Sanitize();
+        Current.ScreenshotKeep = Math.Clamp(Current.ScreenshotKeep, 3, 30);
+        Current.Palette ??= new PaletteSettings();
+        Current.Palette.Shortcuts ??= new();
+        Current.Palette.Disabled ??= new();
+        Current.HeaderIconOrder ??= new();
+        Current.HiddenHeaderIcons ??= new();
         // A file from an older version: unknown keys are ignored on load; rewrite it once so they're gone for good.
         if (legacy) Save();
     }
