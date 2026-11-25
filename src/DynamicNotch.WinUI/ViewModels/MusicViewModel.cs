@@ -7,7 +7,7 @@ namespace DynamicNotch.ViewModels;
 public sealed class MusicViewModel : ObservableObject
 {
     private readonly MediaService _media;
-    private readonly DispatcherTimer _clock;
+    private readonly DispatcherTimer _clock, _recheck;
     private MediaSnapshot _snap = MediaSnapshot.Empty;
     private bool _isVisible;
     private bool _isScrubbing;
@@ -19,6 +19,10 @@ public sealed class MusicViewModel : ObservableObject
         // The clock only ticks while the player page is on screen AND music is playing.
         _clock = new DispatcherTimer() { Interval = TimeSpan.FromMilliseconds(250) };
         _clock.Tick += (_, _) => UpdateTime();
+        // Safety net: while the player is on screen the real state is read again every few seconds (a missed or
+        // late event can't leave it showing "paused" while the music plays).
+        _recheck = new DispatcherTimer() { Interval = TimeSpan.FromSeconds(3) };
+        _recheck.Tick += (_, _) => _media.Recheck();
 
         PlayPauseCommand = new RelayCommand(() => _media.PlayPause());
         NextCommand = new RelayCommand(() => _media.Next());
@@ -59,7 +63,13 @@ public sealed class MusicViewModel : ObservableObject
     public bool IsVisible
     {
         get => _isVisible;
-        set { if (Set(ref _isVisible, value)) UpdateClock(); }
+        set
+        {
+            if (!Set(ref _isVisible, value)) return;
+            UpdateClock();
+            if (value) { _media.Recheck(); _recheck.Start(); } // the notch just opened on the player: check now
+            else _recheck.Stop();
+        }
     }
 
     public event Action? TrackChanged;
@@ -87,7 +97,8 @@ public sealed class MusicViewModel : ObservableObject
     {
         // A new title or cover is a new song; the artist alone changing (a player refining its metadata, or the late
         // report of a song the notch already predicted) isn't, so nothing animates twice.
-        bool trackChanged = s.Title != _snap.Title || !ReferenceEquals(s.Artwork, _snap.Artwork) || (s.Artist != _snap.Artist && string.IsNullOrEmpty(_snap.Title));
+        // The cover arriving a moment later (players update the thumbnail late) isn't a new song either: it just refreshes.
+        bool trackChanged = s.Title != _snap.Title || (s.Artist != _snap.Artist && string.IsNullOrEmpty(_snap.Title));
         _snap = s;
         OnPropertyChanged(string.Empty); // refresh all bindings
         UpdateTime();

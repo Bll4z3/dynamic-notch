@@ -127,7 +127,24 @@ public sealed class MediaService : IDisposable
     private static readonly TimeSpan OverrideFor = TimeSpan.FromSeconds(4);
 
     /// <summary>What a command promised: a play state, a song, or a restart (position 0), until the player catches up.</summary>
-    private sealed record Override(DateTimeOffset Until, bool? Playing, MediaPrediction? Track, bool Restart, string FromTitle);
+    private sealed record Override(DateTimeOffset Until, bool? Playing, MediaPrediction? Track, bool Restart, string FromTitle)
+    {
+        /// <summary>Songs the player may report on the way to <see cref="Track"/> (skipped through): not a wrong prediction.</summary>
+        public IReadOnlySet<string>? Passing { get; init; }
+    }
+
+    /// <summary>
+    /// Something else is about to play this song (the queue view played it): show it now, and hold it through the player's
+    /// late reports, including the songs it reports while skipping to it (<paramref name="passing"/>).
+    /// </summary>
+    public void ExpectTrack(MediaPrediction p, IEnumerable<string> passing)
+    {
+        var s = Snapshot;
+        if (!s.HasMedia) return;
+        var set = new HashSet<string>(passing.Select(t => t.Trim()), StringComparer.OrdinalIgnoreCase);
+        StartOverride(new Override(DateTimeOffset.Now + TimeSpan.FromSeconds(6), true, p, true, s.Title) { Passing = set });
+        PublishOptimistic(AsTrack(s, p));
+    }
 
     public async void PlayPause()
     {
@@ -221,7 +238,7 @@ public sealed class MediaService : IDisposable
         if (o.Track is { } t)
         {
             if (SameTitle(os.Title, t.Title)) { _ovr = o.Playing is { } p && os.IsPlaying != p ? o with { Track = null, Restart = false } : null; }
-            else if (SameTitle(os.Title, o.FromTitle))
+            else if (SameTitle(os.Title, o.FromTitle) || o.Passing?.Contains(os.Title.Trim()) == true)
                 return os with { Title = shown.Title, Artist = shown.Artist, Artwork = shown.Artwork, Album = shown.Album, Duration = shown.Duration,
                                  IsPlaying = o.Playing ?? os.IsPlaying, Position = shown.Position, PositionSampledAt = shown.PositionSampledAt, PlaybackRate = shown.PlaybackRate };
             else { _ovr = null; return os; } // a different song than predicted: the player is right
@@ -318,32 +335,27 @@ public sealed class MediaService : IDisposable
                 return;
             }
 
+            // Refreshes can overlap (an OS event arrives while another refresh is still decoding a cover). Only the newest
+            // one may publish: an older one finishing later would put back a stale state (e.g. "paused" from the moment
+            // the song changed, which then stuck because Spotify sends nothing more while it plays).
+            int version = ++_refreshVersion;
+            var session = _session;
             Log("refresh start");
-            var props = await _session.TryGetMediaPropertiesAsync();
-            var playback = _session.GetPlaybackInfo();
-            Log($"refresh props: '{props?.Title}' {playback.PlaybackStatus}");
-            var timeline = _session.GetTimelineProperties();
-            var controls = playback.Controls;
+            var props = await session.TryGetMediaPropertiesAsync();
+            if (version != _refreshVersion || !ReferenceEquals(session, _session)) { Log("refresh superseded"); return; }
 
             string title = props?.Title ?? "";
             string artist = props?.Artist ?? "";
             if (string.IsNullOrEmpty(artist)) artist = props?.AlbumArtist ?? "";
+            string key = $"{session.SourceAppUserModelId}|{title}|{artist}";
+            await UpdateArtworkAsync(key, title, props);
+            if (version != _refreshVersion || !ReferenceEquals(session, _session)) { Log("refresh superseded"); return; }
 
-            string key = $"{_session.SourceAppUserModelId}|{title}|{artist}";
-            // The player now reports the song the notch already predicted: keep the predicted cover (same bitmap, so
-            // nothing re-animates) instead of decoding the player's thumbnail a second later.
-            if (key != _artKey && _ovr?.Track is { Art: { } predictedArt } t && SameTitle(title, t.Title))
-            {
-                _artKey = key;
-                _art = predictedArt;
-            }
-            if (key != _artKey)
-            {
-                _artKey = key;
-                _art = await LoadArtworkAsync(props);
-                Log($"refresh art loaded ({(_art != null ? "yes" : "none")})");
-            }
-
+            // Read the playback state and timeline now, after the awaits, so they're current when published.
+            var playback = session.GetPlaybackInfo();
+            var timeline = session.GetTimelineProperties();
+            var controls = playback.Controls;
+            Log($"refresh props: '{title}' {playback.PlaybackStatus}");
             var duration = timeline.EndTime - timeline.StartTime;
             Publish(Reconcile(new MediaSnapshot(
                 title, artist, _art,
@@ -373,7 +385,10 @@ public sealed class MediaService : IDisposable
         if (pick == null)
         {
             _userPickedSourceId = null;
-            pick = _manager.GetCurrentSession() ?? sessions.FirstOrDefault();
+            // Windows' "current" session isn't always the one playing (a paused browser tab can hold it while Spotify
+            // plays): prefer one that's actually playing.
+            pick = _manager.GetCurrentSession();
+            if (pick == null || !IsPlaying(pick)) pick = sessions.FirstOrDefault(IsPlaying) ?? pick ?? sessions.FirstOrDefault();
         }
         if (ReferenceEquals(pick, _session) ||
             (pick != null && _session != null && pick.SourceAppUserModelId == _session.SourceAppUserModelId))
@@ -385,8 +400,15 @@ public sealed class MediaService : IDisposable
         if (pick != null) Attach(pick);
     }
 
+    private static bool IsPlaying(GlobalSystemMediaTransportControlsSession s)
+    {
+        try { return s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing; }
+        catch { return false; }
+    }
+
     private void Attach(GlobalSystemMediaTransportControlsSession s)
     {
+        LogState($"listening to {FriendlyAppName(s.SourceAppUserModelId)}");
         _session = s;
         s.MediaPropertiesChanged += OnSessionChanged;
         s.PlaybackInfoChanged += OnSessionChanged;
@@ -415,11 +437,157 @@ public sealed class MediaService : IDisposable
     private void Publish(MediaSnapshot s)
     {
         if (!_running && !ReferenceEquals(s, MediaSnapshot.Empty)) return; // a refresh that finished after Stop()
+        var before = Snapshot;
+        if (SameState(before, s)) return; // nothing new (e.g. a re-check): don't rebuild the player for it
+        if (before.IsPlaying != s.IsPlaying || before.SourceApp != s.SourceApp)
+            LogState($"{(before.SourceApp != s.SourceApp ? $"session {(before.SourceApp.Length == 0 ? "-" : before.SourceApp)} -> {(s.SourceApp.Length == 0 ? "-" : s.SourceApp)}, " : "")}'{s.Title}' {(s.IsPlaying ? "playing" : "paused")}{(_ovr != null ? " (held for a command)" : "")}");
         NoteTrack(s);
         Snapshot = s;
         Changed?.Invoke(s);
         Log($"published '{s.Title}' playing={s.IsPlaying}");
     }
+
+    // ---- Artwork --------------------------------------------------------------------------------------------
+    // Spotify (and some browsers) update the session's thumbnail a moment after the title, so the first read after a
+    // song change can still return the previous song's cover. Each song's cover is decoded once (overlapping refreshes
+    // share the same load, and nothing is marked loaded until it is), compared with the previous song's cover, and
+    // when it's that stale cover (or missing) the song shows the placeholder instead, while the thumbnail is read again
+    // shortly (and on the session's next change) until the real one arrives. A cover the notch already has for the
+    // song (the predicted next song, from Spotify's queue) is used straight away.
+    private int _refreshVersion;
+    private Task<Windows.Graphics.Imaging.SoftwareBitmap?>? _artLoad;
+    private string? _artLoadKey;
+    private bool _artStale;                 // the shown cover for _artKey isn't the real one yet (stale or missing)
+    private ulong _prevArtPrint;            // the previous song's cover (to recognise a stale thumbnail)
+    private int _artRetries;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _artRetry;
+    private static readonly int[] ArtRetryMs = { 300, 700, 1300, 2500 };
+    private Windows.Graphics.Imaging.SoftwareBitmap? _artCandidate; // what the thumbnail returned (maybe the same album's cover)
+
+    private async Task UpdateArtworkAsync(string key, string title, GlobalSystemMediaTransportControlsSessionMediaProperties? props)
+    {
+        if (key != _artKey)
+        {
+            // A new song: forget the old cover now (never show it with the new title).
+            if (_art != null) _prevArtPrint = Fingerprint(_art);
+            _artKey = key;
+            _artRetries = 0;
+            var known = _ovr?.Track is { Art: { } a } t && SameTitle(title, t.Title) ? a
+                      : UpNext is { Art: { } b } u && SameTitle(title, u.Title) ? b : null;
+            if (known != null) { _art = known; _artStale = false; LogState($"cover for '{title}' from the queue prediction"); return; }
+            _art = null;
+            _artCandidate = null;
+            _artStale = true;
+        }
+        if (!_artStale) return;
+        if (_artLoadKey != key || _artLoad == null) { _artLoadKey = key; _artLoad = LoadArtworkAsync(props); }
+        var load = _artLoad;
+        var art = await load;
+        if (ReferenceEquals(load, _artLoad)) _artLoad = null; // next attempt reads the thumbnail again
+        if (key != _artKey || !_artStale) return;
+        if (art != null && (_prevArtPrint == 0 || Fingerprint(art) != _prevArtPrint))
+        {
+            _art = art;
+            _artStale = false;
+            Log($"cover for '{title}' loaded");
+            return;
+        }
+        if (art != null) _artCandidate = art;
+        LogState(art == null ? $"cover for '{title}' not available yet: retrying" : $"cover for '{title}' is still the previous song's: retrying");
+        ScheduleArtRetry();
+    }
+
+    private void ScheduleArtRetry()
+    {
+        if (_artRetries >= ArtRetryMs.Length)
+        {
+            // It never changed: two songs from the same album share their cover, so that one is right after all.
+            _artStale = false;
+            if (_artCandidate != null) { _art = _artCandidate; LogState("cover unchanged after retries: same album, keeping it"); QueueRefresh(reselect: false); }
+            return;
+        }
+        _artRetry ??= Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.CreateTimer();
+        if (_artRetry == null) return;
+        _artRetry.IsRepeating = false;
+        _artRetry.Interval = TimeSpan.FromMilliseconds(ArtRetryMs[_artRetries++]);
+        _artRetry.Tick -= OnArtRetry;
+        _artRetry.Tick += OnArtRetry;
+        _artRetry.Stop();
+        _artRetry.Start();
+    }
+
+    private void OnArtRetry(Microsoft.UI.Dispatching.DispatcherQueueTimer t, object e)
+    {
+        t.Stop();
+        if (!_artStale) return;
+        if (_artRetries >= ArtRetryMs.Length) { ScheduleArtRetry(); return; } // last wait over: settle
+        QueueRefresh(reselect: false);
+    }
+
+    /// <summary>The song on screen still has no real cover (Spotify's Web API can supply one).</summary>
+    public bool NeedsArtwork => Snapshot.HasMedia && (_artStale || _art == null);
+
+    /// <summary>A cover for the playing song from elsewhere (Spotify's Web API), used while the session's is missing / stale.</summary>
+    public void SupplyArtwork(string title, Windows.Graphics.Imaging.SoftwareBitmap art)
+    {
+        if (!NeedsArtwork || !SameTitle(Snapshot.Title, title)) return;
+        _art = art;
+        _artStale = false;
+        LogState($"cover for '{title}' from Spotify's Web API");
+        Snapshot = Snapshot with { Artwork = art };
+        Changed?.Invoke(Snapshot);
+    }
+
+    /// <summary>A cheap fingerprint of a cover (sampled pixels), to tell a stale thumbnail from the new one.</summary>
+    private static ulong Fingerprint(Windows.Graphics.Imaging.SoftwareBitmap bmp)
+    {
+        try
+        {
+            var bytes = new byte[bmp.PixelWidth * bmp.PixelHeight * 4];
+            bmp.CopyToBuffer(System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.AsBuffer(bytes));
+            ulong h = 14695981039346656037UL;
+            for (int i = 0; i < bytes.Length; i += 37) { h ^= bytes[i]; h *= 1099511628211UL; }
+            return h ^ (ulong)bmp.PixelWidth << 32 ^ (ulong)bmp.PixelHeight;
+        }
+        catch { return 0; }
+    }
+
+    // ---- Playback-state safety net and logging -----------------------------------------------------------------
+    /// <summary>Re-reads the sessions and the playing state (the media player is on screen: every few seconds, and when the notch opens).</summary>
+    public void Recheck() { if (_running) QueueRefresh(reselect: _userPickedSourceId == null); }
+
+    /// <summary>
+    /// Spotify's Web API says the song is (not) playing. If the session says otherwise and no command is in flight, the
+    /// session is read again and, while it keeps disagreeing (for up to 20 s), the Web API's answer is shown.
+    /// </summary>
+    public void ConfirmPlaying(string title, bool playing)
+    {
+        var s = Snapshot;
+        if (_ovr != null || !s.HasMedia || !SameTitle(s.Title, title) || s.IsPlaying == playing) return;
+        LogState($"Spotify Web API says '{title}' is {(playing ? "playing" : "paused")}, the session said {(s.IsPlaying ? "playing" : "paused")}: correcting");
+        StartOverride(new Override(DateTimeOffset.Now + TimeSpan.FromSeconds(20), playing, null, false, s.Title));
+        PublishOptimistic(s with { IsPlaying = playing, Position = s.PositionNow, PositionSampledAt = DateTimeOffset.Now });
+        QueueRefresh(reselect: false);
+    }
+
+    /// <summary>Playback-state changes, session switches and corrections, always logged (media.log, kept small).</summary>
+    internal static void LogState(string line)
+    {
+        try
+        {
+            var path = Path.Combine(SettingsService.DataFolder, "media.log");
+            if (File.Exists(path) && new FileInfo(path).Length > 256 * 1024) File.Delete(path);
+            File.AppendAllText(path, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {line}\n");
+        }
+        catch { }
+    }
+
+    /// <summary>Same song, cover, state and controls, and the position where the shown one would be by now (within 1 s).</summary>
+    private static bool SameState(MediaSnapshot a, MediaSnapshot b) =>
+        a.Title == b.Title && a.Artist == b.Artist && a.Album == b.Album && ReferenceEquals(a.Artwork, b.Artwork) && a.IsPlaying == b.IsPlaying
+        && a.Duration == b.Duration && a.CanNext == b.CanNext && a.CanPrevious == b.CanPrevious && a.CanPlayPause == b.CanPlayPause
+        && a.CanSeek == b.CanSeek && a.SourceApp == b.SourceApp && a.SessionCount == b.SessionCount && a.PlaybackRate == b.PlaybackRate
+        && Math.Abs((a.PositionNow - b.PositionNow).TotalSeconds) < 1;
 
     private static async Task<Windows.Graphics.Imaging.SoftwareBitmap?> LoadArtworkAsync(GlobalSystemMediaTransportControlsSessionMediaProperties? props)
     {

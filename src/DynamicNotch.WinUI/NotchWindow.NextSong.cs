@@ -31,6 +31,14 @@ public sealed partial class NotchWindow
     {
         _nextSongTimer = OneShot(DispatcherQueue, NextSongSettleMs, ShowNextSong);
         Vm.Music.TrackChanged += OnSongMaybeChanged;
+        // The cover can arrive a moment after the title: a pill already showing that song picks it up.
+        Vm.Music.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is not ("" or null or nameof(MusicViewModel.Artwork))) return;
+            if (Vm.Activity.Current is { Kind: ActivityKind.NextSong } a && Vm.Music.Artwork is { } art && !ReferenceEquals(a.Artwork, art)
+                && string.Equals(a.Title.Trim(), Vm.Music.Snapshot.Title.Trim(), StringComparison.OrdinalIgnoreCase))
+                _nextSongView.UpdateArt(art);
+        };
         OnSongMaybeChanged(); // whatever is already playing is the baseline, never a "next song"
     }
 

@@ -52,7 +52,7 @@ public sealed class SpotifyLibraryViewModel : ObservableObject
             if (!now) Close(); // something else is playing: the panel goes with the arrow
         };
         music.TrackChanged += OnTrackChanged;
-        spotify.QueueUpdated += q => SetQueue(q);
+        spotify.QueueUpdated += OnQueueFetched;
         spotify.Changed += () => { OnPropertyChanged(nameof(CanShowQueue)); if (!spotify.HasLibraryScopes) SetQueue(null); };
         spotify.Changed += () => { _recent = null; _mine = null; _sectionsLoaded = default; if (IsOpen) _ = LoadSectionsAsync(force: true); };
         settings.Changed += () =>
@@ -132,18 +132,54 @@ public sealed class SpotifyLibraryViewModel : ObservableObject
     }
 
     /// <summary>Dev (--spotify-panel queue-demo): shows songs from a read-only search as the queue, then moves it up every few seconds.</summary>
-    internal async void DevQueueDemo()
+    internal async void DevQueueDemo(bool playThird = false)
     {
         var r = await _spotify.SearchTracksAsync("nines");
         if (!r.Ok || r.Value!.Count < 3) return;
         var all = r.Value;
         SetQueue(new SpotifyQueue(all[0], all.Skip(1).Take(6).ToList()));
         OpenQueue();
+        if (playThird) { await Task.Delay(3500); await PlayQueuedAsync(_queue!.Items[2], dryRun: true); return; } // a click on the 3rd song
         for (int i = 1; i < 4; i++)
         {
             await Task.Delay(3500);
             SetQueue(new SpotifyQueue(all[i], all.Skip(i + 1).Take(6).ToList())); // the next song moves up; one joins at the end
         }
+    }
+
+    /// <summary>Shows a song in the player at once (set by the app: Spotify reports changes late). Args: song, songs skipped past.</summary>
+    public Func<SpotifyTrack, IEnumerable<string>, Task>? ExpectTrack { get; set; }
+
+    private bool _playingQueued;
+
+    /// <summary>
+    /// Plays a song from the queue: the queue moves up to it at once (the songs before it leave), the player shows it,
+    /// then Spotify is asked (jump within the playlist, else skip forward to it). A problem shows as a notice and the
+    /// next fetch puts the real queue back.
+    /// </summary>
+    public async Task PlayQueuedAsync(SpotifyTrack t) => await PlayQueuedAsync(t, dryRun: false);
+
+    /// <param name="dryRun">Dev: only the on-screen part (no request to Spotify).</param>
+    private async Task PlayQueuedAsync(SpotifyTrack t, bool dryRun)
+    {
+        if (_playingQueued || _queue is not { } q) return;
+        int position = -1;
+        for (int i = 0; i < q.Items.Count; i++) if (ReferenceEquals(q.Items[i], t)) { position = i; break; }
+        if (position < 0) position = q.Items.ToList().FindIndex(x => x.Uri == t.Uri);
+        if (position < 0) return;
+        _playingQueued = true;
+        try
+        {
+            var passing = q.Items.Take(position).Select(x => x.Name).Append(q.Current?.Name ?? _music.Snapshot.Title).ToList();
+            SetQueue(new SpotifyQueue(q.Items[position], q.Items.Skip(position + 1).ToList())); // optimistic
+            if (ExpectTrack != null) await ExpectTrack(q.Items[position], passing);
+            if (dryRun) return;
+            var e = await _spotify.PlayQueuedAsync(q.Items[position], position);
+            if (e != SpotifyError.None) { Notice?.Invoke(_spotify.Describe(e), true); _ = RefreshQueueAsync(); return; }
+            await Task.Delay(1500); // then confirm with Spotify's own queue (stale answers are retried)
+            if (View == SpotifyPanelView.Queue) _ = RefreshQueueAsync();
+        }
+        finally { _playingQueued = false; }
     }
 
     public void CloseQueue()
@@ -161,6 +197,23 @@ public sealed class SpotifyLibraryViewModel : ObservableObject
         if (r.Ok) return; // the queue itself arrives through QueueUpdated
         if (_queue is { Items.Count: > 0 }) Notice?.Invoke(_spotify.Describe(r.Error), true); // keep the songs on screen
         else QueueMessage = _spotify.Describe(r.Error);
+    }
+
+    private int _staleRetries;
+
+    /// <summary>
+    /// A fetched queue. Spotify's queue lags a song change by a moment: one whose "currently playing" isn't the song on
+    /// screen is stale, so it's ignored (and fetched again shortly while the queue is open) instead of flipping the list back.
+    /// </summary>
+    private async void OnQueueFetched(SpotifyQueue q)
+    {
+        var title = _music.Snapshot.Title.Trim();
+        bool stale = q.Current != null && title.Length > 0 && !string.Equals(q.Current.Name.Trim(), title, StringComparison.OrdinalIgnoreCase);
+        if (!stale) { _staleRetries = 0; SetQueue(q); return; }
+        if (View != SpotifyPanelView.Queue || _staleRetries >= 3) { if (_queue == null) SetQueue(q); return; }
+        _staleRetries++;
+        await Task.Delay(1800);
+        if (View == SpotifyPanelView.Queue) _ = RefreshQueueAsync();
     }
 
     private void SetQueue(SpotifyQueue? q)

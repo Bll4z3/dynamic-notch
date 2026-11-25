@@ -23,8 +23,8 @@ namespace DynamicNotch.Views;
 /// after it. When the queue changes while it's open, the rows animate instead of reloading: the old song slides up out
 /// of "Now playing" as the next one slides in, rows that went away fold out, the rest glide into place, new ones fade
 /// in. Loading shows shimmering placeholder rows; nothing queued and errors show a short line in place of the list.
-/// The background takes a faint tint of the cover's colour, fading as songs change. View-only: Spotify's Web API can't
-/// reorder, remove or jump to queued songs.
+/// It draws no background of its own: the notch's album glow shows through, so it blends in. Clicking a song plays it (the songs
+/// before it leave the queue, as in Spotify); the Web API can't reorder or remove queued songs, so there's no drag or delete.
 /// </summary>
 public sealed class QueueView : Grid
 {
@@ -39,15 +39,11 @@ public sealed class QueueView : Grid
     private readonly Dictionary<string, QueueRow> _byKey = new();
     private readonly HashSet<QueueRow> _leaving = new();
     private readonly Equalizer _eq = new();
-    private readonly SpriteVisual _tint;
-    private readonly CompositionColorGradientStop _tintStop;
-    private readonly Border _fadeTop = Fade(top: true), _fadeBottom = Fade(top: false);
     private Grid? _nowContent;
     private string? _nowId;
     private bool _shown;
 
-    /// <param name="tintHost">An element behind the whole player (the tint spreads under the art too, so its only edge is the notch's).</param>
-    public QueueView(SpotifyLibraryViewModel vm, MusicViewModel music, FrameworkElement tintHost)
+    public QueueView(SpotifyLibraryViewModel vm, MusicViewModel music)
     {
         _vm = vm;
         _music = music;
@@ -55,19 +51,6 @@ public sealed class QueueView : Grid
         foreach (var h in new[] { GridLength.Auto, Theme.GapS2, GridLength.Auto, new GridLength(10), GridLength.Auto, new GridLength(4), new GridLength(1, GridUnitType.Star) })
             RowDefinitions.Add(new RowDefinition { Height = h });
 
-        // ---- Tint: the cover's colour, very faint, a soft round glow from the upper middle ----
-        var c = Anim.VisualOf(this).Compositor;
-        var gradient = c.CreateRadialGradientBrush();
-        gradient.EllipseCenter = new Vector2(0.55f, 0.15f);
-        gradient.EllipseRadius = new Vector2(0.75f, 0.95f);
-        gradient.MappingMode = CompositionMappingMode.Relative;
-        _tintStop = c.CreateColorGradientStop(0, Color.FromArgb(0, 0, 0, 0));
-        gradient.ColorStops.Add(_tintStop);
-        gradient.ColorStops.Add(c.CreateColorGradientStop(1, Color.FromArgb(0, 0, 0, 0)));
-        _tint = c.CreateSpriteVisual();
-        _tint.Brush = gradient;
-        ElementCompositionPreview.SetElementChildVisual(tintHost, _tint);
-        tintHost.SizeChanged += (_, e) => _tint.Size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
 
         // ---- Header: back · Queue · count ----
         var head = new Grid { ColumnSpacing = Theme.S2 };
@@ -149,11 +132,6 @@ public sealed class QueueView : Grid
         _messageBox.Children.Add(ms);
         _messageBox.Visibility = Visibility.Collapsed;
         _listArea.Children.Add(_messageBox);
-        _listArea.Children.Add(_fadeTop);
-        _listArea.Children.Add(_fadeBottom);
-        _scroll.ViewChanged += (_, _) => UpdateFades();
-        _scroll.SizeChanged += (_, _) => UpdateFades();
-        _rows.SizeChanged += (_, _) => UpdateFades();
         Children.Add(_listArea);
 
         vm.QueueChanged += () => Apply(animate: _shown && Anim.Enabled);
@@ -186,25 +164,20 @@ public sealed class QueueView : Grid
     /// <summary>The player's song changed: refresh the "Now playing" stand-in (only used while Spotify sends none).</summary>
     public void PlayerChanged()
     {
-        if (_vm.Queue?.Current == null) { ApplyNowPlaying(FromPlayer(), animate: _shown && Anim.Enabled); RefreshState(); }
+        if (_vm.Queue?.Current != null) return;
+        // Same song, cover arrived late: update the stand-in's cover in place.
+        if (FromPlayer() is { } t && t.Uri == _nowId && _playerCoverBrush != null) { LoadPlayerCover(_playerCoverBrush, _music.Artwork); return; }
+        ApplyNowPlaying(FromPlayer(), animate: _shown && Anim.Enabled);
+        RefreshState();
     }
+
+    private ImageBrush? _playerCoverBrush;
 
     public void Hidden()
     {
         _shown = false;
         _eq.Playing = false;
         SetSkeleton(false);
-    }
-
-    /// <summary>The cover's colour (null: none), faded in over ~0.6 s.</summary>
-    public void SetTint(Color? color, bool animate)
-    {
-        var target = color is { } k ? Color.FromArgb(0x2E, k.R, k.G, k.B) : Color.FromArgb(0, 0, 0, 0);
-        if (!animate || !Anim.Enabled) { _tintStop.StopAnimation("Color"); _tintStop.Color = target; return; }
-        var a = _tintStop.Compositor.CreateColorKeyFrameAnimation();
-        a.InsertKeyFrame(1, target);
-        a.Duration = TimeSpan.FromMilliseconds(650);
-        _tintStop.StartAnimation("Color", a);
     }
 
     // ---- Applying a queue -----------------------------------------------------------------------------------
@@ -239,7 +212,7 @@ public sealed class QueueView : Grid
             }
             else
             {
-                row = new QueueRow(track);
+                row = new QueueRow(track, t => _ = _vm.PlayQueuedAsync(t));
                 _byKey[key] = row;
                 _rows.Children.Insert(Math.Min(pos, _rows.Children.Count), row);
                 if (animate) row.FadeIn(0.12 + Math.Min(appended++, 8) * 0.03);
@@ -329,6 +302,7 @@ public sealed class QueueView : Grid
             cover = SpotifyPanel.Cover(null, 36, 6);
             var brush = new ImageBrush { Stretch = Stretch.UniformToFill };
             cover.Children.Add(new Border { Background = brush });
+            _playerCoverBrush = brush;
             LoadPlayerCover(brush, _music.Artwork);
         }
         else cover = SpotifyPanel.Cover(t.ImageUrl, 36, 6);
@@ -355,17 +329,8 @@ public sealed class QueueView : Grid
         _message.Text = message ?? "";
         _messageIcon.Data = q is { Items.Count: 0 } && _vm.QueueMessage == null ? Icons.Queue : Icons.Alert;
         _scroll.Visibility = loading || message != null ? Visibility.Collapsed : Visibility.Visible;
-        UpdateFades();
         _nextUp.Visibility = loading || q is { Items.Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
         _nowHost.Visibility = _nowContent != null || loading ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    /// <summary>Each edge fades only while rows are hidden past it (at rest a fade would just read as a dark band).</summary>
-    private void UpdateFades()
-    {
-        bool list = _scroll.Visibility == Visibility.Visible;
-        _fadeTop.Opacity = list && _scroll.VerticalOffset > 1 ? 1 : 0;
-        _fadeBottom.Opacity = list && _scroll.ScrollableHeight - _scroll.VerticalOffset > 1 ? 1 : 0;
     }
 
     // ---- Skeleton rows: rounded placeholders that shimmer in a wave ------------------------------------------
@@ -407,19 +372,6 @@ public sealed class QueueView : Grid
         return g;
     }
 
-    /// <summary>A soft fade into the notch's black at the top / bottom edge of the list, so rows don't cut off sharply.</summary>
-    private static Border Fade(bool top)
-    {
-        var b = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, top ? 0 : 1), EndPoint = new Windows.Foundation.Point(0, top ? 1 : 0) };
-        b.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0xC8, 0, 0, 0), Offset = 0 });
-        b.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0, 0, 0, 0), Offset = 1 });
-        return new Border
-        {
-            Height = top ? 16 : 24, Background = b, IsHitTestVisible = false, Margin = new Thickness(0, 0, Theme.S2, 0), Opacity = 0,
-            VerticalAlignment = top ? VerticalAlignment.Top : VerticalAlignment.Bottom,
-        };
-    }
-
     private static Style StyleOf(string key) => (Style)Application.Current.Resources[key];
 
     // =========================================================================================================
@@ -430,7 +382,7 @@ public sealed class QueueView : Grid
         private readonly Grid _content = new();
         private readonly CompSpring _in, _hover;
 
-        public QueueRow(SpotifyTrack t)
+        public QueueRow(SpotifyTrack t, Action<SpotifyTrack> play)
         {
             Height = RowHeight;
             Background = Theme.TransparentBrush;
@@ -454,8 +406,10 @@ public sealed class QueueView : Grid
             SetColumn(time, 2);
             _content.Children.Add(time);
             Children.Add(_content);
-            ToolTipService.SetToolTip(this, string.IsNullOrEmpty(t.Artists) ? t.Name : $"{t.Name} · {t.Artists}");
+            ToolTipService.SetToolTip(this, $"Play {t.Name}");
             Motions.SlideIntoPlace(this, 280); // others glide when a row leaves or arrives
+            Motions.PressScale(this);
+            Tapped += (_, e) => { e.Handled = true; play(t); };
 
             var c = Anim.VisualOf(this).Compositor;
             var p = c.CreatePropertySet();
