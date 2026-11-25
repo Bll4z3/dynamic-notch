@@ -34,11 +34,11 @@ public sealed class NetworkService : IDisposable
         _lastSsid = ssid;
 
         if (ssid != null && previous == null)
-            Pill?.Invoke(new PillRequest(PillSource.Network, "Wi-Fi connected", ssid, Icons.Wifi));
+            Pill?.Invoke(new PillRequest(PillSource.Network, "Wi-Fi connected", ssid, Icons.Wifi, Anim: PillAnim.WifiOn));
         else if (ssid == null && previous != null)
-            Pill?.Invoke(new PillRequest(PillSource.Network, "Wi-Fi disconnected", previous, Icons.Wifi, Badge: "off"));
+            Pill?.Invoke(new PillRequest(PillSource.Network, "Wi-Fi disconnected", previous, Icons.Wifi, Badge: "off", Anim: PillAnim.WifiOff));
         else if (ssid != null)
-            Pill?.Invoke(new PillRequest(PillSource.Network, "Network changed", ssid, Icons.Wifi));
+            Pill?.Invoke(new PillRequest(PillSource.Network, "Network changed", ssid, Icons.Wifi, Anim: PillAnim.WifiOn));
     }
 
     /// <summary>Returns the connected Wi-Fi SSID, or null if the active connection isn't Wi-Fi.</summary>

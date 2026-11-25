@@ -48,6 +48,8 @@ public sealed partial class NotchWindow : Window
     private NotchShape _shape = null!;
     private CompSpring _width = null!, _height = null!, _pillContent = null!, _collapsedContent = null!;
     private CompSpring _page = null!; // the pager: fractional page index ("Page")
+    private CompSpring _artFly = null!; // the album art's shared-element flight, 0 closed .. 1 open ("ArtFly")
+    private bool _lyricsResize; // the next retarget is the media player switching to / from its lyrics layout
 
     private NotchState _state = NotchState.Collapsed;
     private bool _hover, _mouseOver, _hoverPill, _pinned, _expandedRevealed;
@@ -96,6 +98,8 @@ public sealed partial class NotchWindow : Window
         BuildScreenshots();
         BuildOverlays();
         BuildLyrics();
+        BuildUsageRings();
+        BuildPillIcon();
         UpdateGlowColor(animate: false);
         // Any click on the notch pins it, including clicks that a button inside it handles.
         NotchRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Notch_PointerPressed), handledEventsToo: true);
@@ -286,6 +290,7 @@ public sealed partial class NotchWindow : Window
         _pillContent = new CompSpring(n, "Pill", Motion.Pop, 0);
         _collapsedContent = new CompSpring(n, "Collapsed", Motion.FadeIn, 0);
         _page = new CompSpring(n, "Page", Motion.Page, Vm.PageIndex, precision: 0.5);
+        _artFly = new CompSpring(n, "ArtFly", Motion.ArtFlyOpen, 0);
         n.InsertScalar("Full", (float)_morphFullHeight);
 
         // All content is clipped to the live body shape, so nothing ever overflows the morph.
@@ -358,6 +363,7 @@ public sealed partial class NotchWindow : Window
         // Pills wait while the notch is open or an activity pill is up; they resume (with a fresh timer) after.
         Vm.HoldPill(next is NotchState.Expanded or NotchState.Activity || _hint);
         if (next == NotchState.Expanded && Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
+        if (next == NotchState.Expanded) _frame.Stagger.Prime(); // the album art shows from the first frame of its flight
         // An activity pill that ended under the pointer: carry on as a normal hover (open after the usual delay).
         if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; if (!ClickToOpen) Restart(_expandTimer, HoverDelayMs); }
         if (prev == NotchState.Expanded && next != NotchState.Expanded)
@@ -399,7 +405,7 @@ public sealed partial class NotchWindow : Window
         _fullAppliedOpen = _state == NotchState.Expanded;
         _shape.Props.InsertScalar("Full", (float)_morphFullHeight);
 
-        double w, h;
+        double w, h, heightDelay = 0;
         SpringPreset preset = Motion.Notch;
         switch (_state)
         {
@@ -407,6 +413,14 @@ public sealed partial class NotchWindow : Window
                 (w, h) = expanded;
                 if (Vm.IsPaletteOpen && _expandedRevealed) preset = Motion.PaletteResize;
                 else if (Vm.IsAskPage && _expandedRevealed) preset = Motion.AskResize;
+                else if (_lyricsResize && _expandedRevealed && Math.Abs(h - _height.Target) > 0.5)
+                {
+                    // The media player's lyrics layout: the notch grows with the blocks' downward move (lead) and, when
+                    // lyrics close, shrinks only once they've moved back up (follow), so nothing is cut off at the edge.
+                    bool grow = h > _height.Target;
+                    preset = grow ? Motion.LyricsLead : Motion.LyricsFollow;
+                    if (!grow) heightDelay = Motion.LyricsAxisDelay / Math.Max(0.5, Motion.Speed);
+                }
                 break;
             case NotchState.Pill:
                 w = Theme.PillWidth; h = Theme.PillHeight; preset = Motion.Pop; // pop with a little overshoot
@@ -418,10 +432,16 @@ public sealed partial class NotchWindow : Window
                 w = minimal ? Theme.MinimalWidth : playing || timer ? Theme.CollapsedPlayingWidth : Theme.CollapsedWidth;
                 h = minimal ? Theme.MinimalHeight : Theme.CollapsedHeight;
                 if (lyricWidth is { } lw) w = lw; // the line being sung: the notch fits it
+                else w += 2 * ClosedUsageExtra; // Claude usage rings after the battery ring: widen both sides (the clock stays centred)
                 // Click to open: hovering swells the closed notch a touch, so it reads as clickable.
                 if (ClickToOpen && _mouseOver) { w += Theme.ClickHoverGrowWidth; h += Theme.ClickHoverGrowHeight; }
                 break;
         }
+
+        // The album art's flight starts with the shape (opening and closing), on its own critically damped spring.
+        double fly = _state == NotchState.Expanded ? 1 : 0;
+        if (immediate) _artFly.Snap(fly);
+        else if (fly != _artFly.Target) _artFly.SetTarget(fly, fly > 0 ? Motion.ArtFlyOpen : Motion.ArtFlyClose);
 
         if (immediate) { _width.Snap(w); _height.Snap(h); }
         else if (preset == Motion.Notch && (h != _height.Target || w != _width.Target))
@@ -432,7 +452,7 @@ public sealed partial class NotchWindow : Window
             _width.SetTarget(w, opening ? Motion.NotchLead : Motion.Notch);
             _height.SetTarget(h, opening ? Motion.Notch : Motion.NotchLead);
         }
-        else { _width.SetTarget(w, preset); _height.SetTarget(h, preset); }
+        else { _width.SetTarget(w, preset); _height.SetTarget(h, preset, heightDelay); }
 
         // Content leaving the stage fades out right away (faster than it arrives); incoming content
         // waits for the container (see PlanReveal).
@@ -463,6 +483,7 @@ public sealed partial class NotchWindow : Window
         _frame.Shelf.SetDropActive(_dragIn);
         UpdateMatchedFlags();
         UpdateGlowLevel();
+        UpdateUsageDemand();
 
         UpdateHitArea();
         UpdateKeyCapture();
@@ -600,7 +621,7 @@ public sealed partial class NotchWindow : Window
                 UpdateState();
                 break;
             case nameof(MainViewModel.MinimalNotch):
-                ApplyTargets();
+                ApplyUsageRings(animate: true); // the closed notch's usage rings hide in minimal mode (re-applies the targets)
                 break;
         }
     }
@@ -641,6 +662,7 @@ public sealed partial class NotchWindow : Window
         PillBadge.Visibility = string.IsNullOrEmpty(p.Badge) ? Visibility.Collapsed : Visibility.Visible;
         PillBadgeText.Text = p.Badge == "off" ? "Off" : p.Badge ?? "";
         PillBadgeText.Foreground = p.Badge == "off" ? Theme.SecondaryText : Theme.PrimaryText;
+        ApplyPillIcon(p);
 
         // Re-trigger the pop even if a pill is already showing.
         if (_state == NotchState.Pill)
@@ -665,6 +687,7 @@ public sealed partial class NotchWindow : Window
         _hoverWatch.Start();
         _collapseTimer.Stop();
         NotchRing.ShowNumber = true;
+        SetUsageNumbers(true);
         UpdateKeyCapture();
         if (_state == NotchState.Pill)
         {
@@ -692,6 +715,7 @@ public sealed partial class NotchWindow : Window
         _mouseOver = false;
         _expandTimer.Stop();
         NotchRing.ShowNumber = false;
+        SetUsageNumbers(false);
         UpdateKeyCapture();
         if (_hoverPill)
         {

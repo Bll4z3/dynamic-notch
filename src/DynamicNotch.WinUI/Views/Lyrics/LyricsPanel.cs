@@ -119,7 +119,7 @@ public sealed class LyricsPanel : Grid
         _vm.ActiveChanged += (_, _) => OnActive();
         _vm.ClockJumped += () => { _manual = 0; _follow = true; _backShow.SetTarget(0, Motion.FadeOut); _back.IsHitTestVisible = false; Restyle(true); Retarget(true, false, Motion.LyricScroll); };
         _vm.Message += ShowMessage;
-        _vm.DisplayChanged += () => { _dirty = true; if (_shown) Rebuild(); };
+        _vm.DisplayChanged += () => { _dirty = true; if (_shown) Rebuild(); else Prebuild(); };
         _vm.PropertyChanged += OnVmChanged;
         _back.IsHitTestVisible = false;
         OnDocument();
@@ -173,7 +173,12 @@ public sealed class LyricsPanel : Grid
         _shown = shown;
         if (shown)
         {
-            if (_dirty || !ReferenceEquals(_builtFor, _vm.Document)) Rebuild();
+            // Lines are normally built ahead of time (Prebuild). If not, build them just after this frame, so the
+            // layout morph that is starting right now isn't held up by creating the rows.
+            if (_dirty || !ReferenceEquals(_builtFor, _vm.Document)) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                if (_shown && (_dirty || !ReferenceEquals(_builtFor, _vm.Document))) Rebuild();
+            });
             else { Restyle(false); Retarget(false, false, Motion.LyricScroll); }
             UpdatePlainTimer();
         }
@@ -222,6 +227,7 @@ public sealed class LyricsPanel : Grid
                 _emptyFade.SetTarget(0, Motion.FadeOut);
                 _dirty = true;
                 if (_shown) Rebuild();
+                else Prebuild();
                 break;
             case LyricsStatus.Loading:
                 // The old lyrics fade out, then a short shimmer (only if loading takes a moment: cached songs skip it).
@@ -250,6 +256,16 @@ public sealed class LyricsPanel : Grid
         }
         UpdatePlainTimer();
     }
+
+    /// <summary>
+    /// Builds the lines while the panel is hidden (at low priority, when the app is idle), so they're laid out and ready
+    /// by the time lyrics open: the open is just the morph. Hidden lines aren't activated (no lit copies or glows).
+    /// </summary>
+    private void Prebuild() => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+    {
+        try { if (!_shown && _dirty && _vm.Status == LyricsStatus.Ready) Rebuild(); }
+        catch (Exception ex) { App.LogError(ex); }
+    });
 
     private void Rebuild()
     {

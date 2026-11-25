@@ -26,6 +26,14 @@ public static class Icons
     // Status / pills
     public const string Headphone = "M3 14 h3 a2 2 0 0 1 2 2 v3 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 v-7 a9 9 0 0 1 18 0 v7 a2 2 0 0 1 -2 2 h-1 a2 2 0 0 1 -2 -2 v-3 a2 2 0 0 1 2 -2 h3";
     public const string Bluetooth = "M7 7 L17 17 L12 22 V2 L17 7 L7 17";
+    /// <summary>Lucide "usb" (circles as arcs).</summary>
+    public const string Usb = "M9 7 a1 1 0 1 0 2 0 a1 1 0 1 0 -2 0 z M3 20 a1 1 0 1 0 2 0 a1 1 0 1 0 -2 0 z M4.7 19.3 L19 5 M21 3 l-3 1 l2 2 z M9.26 7.68 L5 12 l2 5 M10 14 l5 2 l3.5 -3.5 M18 12 l1 -1 l1 1 l-1 1 z";
+    /// <summary>Lucide "monitor".</summary>
+    public const string Monitor = "M4 3 h16 a2 2 0 0 1 2 2 v10 a2 2 0 0 1 -2 2 H4 a2 2 0 0 1 -2 -2 V5 a2 2 0 0 1 2 -2 z M8 21 h8 M12 17 v4";
+    /// <summary>The Wi-Fi icon's parts (dot, then the arcs from small to large), for the pill animation.</summary>
+    public const string WifiDot = "M12 20 h.01", WifiArc1 = "M8.5 16.43 a5 5 0 0 1 7 0", WifiArc2 = "M5 12.86 a10 10 0 0 1 14 0", WifiArc3 = "M2 8.82 a15 15 0 0 1 20 0";
+    /// <summary>The VPN shield without its check, and the check alone (the pill draws them separately).</summary>
+    public const string VpnShield = "M20 13 c0 5 -3.5 7.5 -7.66 8.95 a1 1 0 0 1 -.67 -.01 C7.5 20.5 4 18 4 13 V6 a1 1 0 0 1 1 -1 c2 0 4.5 -1.2 6.24 -2.72 a1.17 1.17 0 0 1 1.52 0 C14.51 3.81 17 5 19 5 a1 1 0 0 1 1 1 z", VpnCheck = "M9 12 l2 2 l4 -4";
     public const string Wifi = "M12 20 h.01 M2 8.82 a15 15 0 0 1 20 0 M5 12.86 a10 10 0 0 1 14 0 M8.5 16.43 a5 5 0 0 1 7 0";
     public const string Vpn = "M20 13 c0 5 -3.5 7.5 -7.66 8.95 a1 1 0 0 1 -.67 -.01 C7.5 20.5 4 18 4 13 V6 a1 1 0 0 1 1 -1 c2 0 4.5 -1.2 6.24 -2.72 a1.17 1.17 0 0 1 1.52 0 C14.51 3.81 17 5 19 5 a1 1 0 0 1 1 1 z M9 12 l2 2 l4 -4";
     public const string Bolt = "F1 M13 2 L4 14 h7 l-1 8 l9 -12 h-7 z";

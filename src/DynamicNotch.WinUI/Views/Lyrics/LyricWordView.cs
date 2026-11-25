@@ -56,6 +56,9 @@ internal sealed class LyricWordView : Grid
     private readonly bool _letters;
     private readonly List<TextBlock> _texts = new();
     private readonly Border _softHost = new() { IsHitTestVisible = false }, _litHost = new() { IsHitTestVisible = false };
+    private readonly Border _lineGlowHost = new() { IsHitTestVisible = false }; // under the text: the current line's soft glow
+    private const float LineGlowBlur = 0.8f;    // the current line's glow blur, as a share of the font size
+    private const float LineGlowStrength = 0.3f;
     private readonly List<IDisposable> _owned = new();
     private readonly List<CompositionColorGradientStop[]> _stops = new();
     private ContainerVisual? _softRoot;
@@ -71,6 +74,7 @@ internal sealed class LyricWordView : Grid
         Backing = backing;
         var letters = TextElements(word.Text);
         _letters = word.Held && letters.Count is >= 2 and <= MaxLetterSplit;
+        Children.Add(_lineGlowHost);
         Children.Add(_softHost);
         if (_letters)
         {
@@ -182,6 +186,8 @@ internal sealed class LyricWordView : Grid
         var root = c.CreateContainerVisual();
         _owned.Add(root);
         float k = Backing ? 0.85f : 1f;
+        var lineGlow = c.CreateContainerVisual();
+        _owned.Add(lineGlow);
         for (int j = 0; j < _texts.Count; j++)
         {
             var tb = _texts[j];
@@ -222,7 +228,28 @@ internal sealed class LyricWordView : Grid
             sprite.StartAnimation("Opacity", Expr($"{Anim.F(k)} * Clamp(N.A, 0, 1)"));
             _owned.Add(grad); _owned.Add(lit); _owned.Add(sprite);
 
-            // The glow: the lit shape blurred in the album colour, while the word is sung (held notes build and pulse).
+            // The current line's glow: the whole line's text, softly blurred in the album colour behind it, breathing a
+            // little with the music; scaled by the lyrics glow intensity (C.Gi, live).
+            try
+            {
+                var halo = c.CreateDropShadow();
+                halo.Mask = mask;
+                halo.Color = colours.Glow;
+                halo.Offset = Vector3.Zero;
+                halo.StartAnimation("BlurRadius", Expr($"{Anim.F(_fontSize * LineGlowBlur)} * (0.8 + 0.2 * Clamp(C.Gi, 0, 2))"));
+                halo.StartAnimation("Opacity", Expr($"Clamp(N.A * {Anim.F(LineGlowStrength * k)} * C.Gi * (0.85 + 0.15 * C.V), 0, 1)"));
+                var haloSprite = c.CreateSpriteVisual();
+                haloSprite.Size = size;
+                haloSprite.Offset = pos;
+                haloSprite.Shadow = halo;
+                lineGlow.Children.InsertAtTop(haloSprite);
+                _owned.Add(halo); _owned.Add(haloSprite);
+                _glows.Add(halo);
+            }
+            catch { /* no glow on this system */ }
+
+            // The glow: the lit shape blurred in the album colour, while the word is sung (held notes build and pulse);
+            // scaled by the lyrics glow intensity (C.Gi).
             try
             {
                 var glow = c.CreateDropShadow();
@@ -231,13 +258,13 @@ internal sealed class LyricWordView : Grid
                 glow.Offset = Vector3.Zero;
                 if (_word.Held)
                 {
-                    glow.StartAnimation("BlurRadius", Expr($"{Anim.F(GlowBlur - 2)} + 10 * {Progress} + 4 * C.H"));
-                    glow.StartAnimation("Opacity", Expr($"Clamp(N.A * {Singing} * (0.55 + 0.45 * {Progress}) * (0.75 + 0.4 * C.V), 0, 1)"));
+                    glow.StartAnimation("BlurRadius", Expr($"({Anim.F(GlowBlur - 2)} + 10 * {Progress} + 4 * C.H) * (0.8 + 0.2 * Clamp(C.Gi, 0, 2))"));
+                    glow.StartAnimation("Opacity", Expr($"Clamp(N.A * {Singing} * (0.55 + 0.45 * {Progress}) * (0.75 + 0.4 * C.V) * C.Gi, 0, 1)"));
                 }
                 else
                 {
-                    glow.BlurRadius = GlowBlur * (float)(_fontSize / 20);
-                    glow.StartAnimation("Opacity", Expr($"Clamp(N.A * {Singing} * {Anim.F(GlowStrength * k)} * (0.7 + 0.3 * C.V), 0, 1)"));
+                    glow.StartAnimation("BlurRadius", Expr($"{Anim.F(GlowBlur * _fontSize / 20)} * (0.8 + 0.2 * Clamp(C.Gi, 0, 2))"));
+                    glow.StartAnimation("Opacity", Expr($"Clamp(N.A * {Singing} * {Anim.F(GlowStrength * k)} * (0.7 + 0.3 * C.V) * C.Gi, 0, 1)"));
                 }
                 sprite.Shadow = glow;
                 _owned.Add(glow);
@@ -262,6 +289,7 @@ internal sealed class LyricWordView : Grid
             Anim.VisualOf(tb).CenterPoint = group.CenterPoint;
         }
         ElementCompositionPreview.SetElementChildVisual(_litHost, root);
+        ElementCompositionPreview.SetElementChildVisual(_lineGlowHost, lineGlow);
     }
 
     private readonly List<DropShadow> _glows = new();
@@ -327,6 +355,7 @@ internal sealed class LyricWordView : Grid
         _active = _softBuilt = false;
         ElementCompositionPreview.SetElementChildVisual(_litHost, null);
         ElementCompositionPreview.SetElementChildVisual(_softHost, null);
+        ElementCompositionPreview.SetElementChildVisual(_lineGlowHost, null);
         foreach (var o in _owned) try { o.Dispose(); } catch { }
         _owned.Clear();
         _stops.Clear();

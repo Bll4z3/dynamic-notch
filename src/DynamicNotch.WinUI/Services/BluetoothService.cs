@@ -148,7 +148,7 @@ public sealed class BluetoothService : IDisposable
         StopBatteryTracking(st);
         Ui(() => DeviceDisconnected?.Invoke(st.Id));
         if (announce)
-            Ui(() => Pill?.Invoke(new PillRequest(PillSource.Device, st.Name, "Disconnected", GlyphFor(st.Kind), Badge: "off")));
+            Ui(() => Pill?.Invoke(new PillRequest(PillSource.Device, st.Name, "Disconnected", GlyphFor(st.Kind), Badge: "off", Anim: PillAnim.DeviceOff)));
     }
 
     private async Task AnnounceConnectedAsync(DeviceState st)
@@ -156,7 +156,7 @@ public sealed class BluetoothService : IDisposable
         // Give the battery a moment to arrive so the pill can show it.
         for (int i = 0; i < 8 && st.Battery == null; i++) await Task.Delay(150);
         var badge = st.Battery is int b ? $"{b}%" : null;
-        Ui(() => Pill?.Invoke(new PillRequest(PillSource.Device, st.Name, "Connected", GlyphFor(st.Kind), Badge: badge)));
+        Ui(() => Pill?.Invoke(new PillRequest(PillSource.Device, st.Name, "Connected", GlyphFor(st.Kind), Badge: badge, Anim: PillAnim.DeviceOn)));
     }
 
     // ---- Battery: DEVPKEY via a per-device watcher, GATT Battery Service fallback --------------

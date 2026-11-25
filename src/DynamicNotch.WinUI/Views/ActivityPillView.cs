@@ -310,7 +310,69 @@ public sealed class ActivityPillView : Grid
         }
         if (a.Kind == ActivityKind.Brightness) _rays.Snap(a.Level ?? 1);
         _iconPop.Snap(1); // only the battery kinds pop their bolt (in Update)
+        StopPowerMotion();
         Update(a, null);
+    }
+
+    // ---- Power motion: the charger bolt "zaps", low battery pulses gently in red -------------------------------------
+    private bool _powerMotion;
+
+    /// <summary>
+    /// Plugged in: the bolt jolts (a quick twist and flash) on top of its pop. Low battery: the icon breathes three
+    /// times, fading and swelling slightly. Compositor keyframes on the icon's rotation and opacity (nothing else
+    /// animates those), about 450 ms and 3 × 900 ms.
+    /// </summary>
+    private void PlayPowerMotion(bool low, bool charging)
+    {
+        StopPowerMotion();
+        if (!Anim.Enabled || !(low || charging)) return;
+        var v = Anim.VisualOf(_icon);
+        var c = v.Compositor;
+        var ease = c.CreateCubicBezierEasingFunction(new Vector2(0.3f, 0.6f), new Vector2(0.4f, 1f));
+        _powerMotion = true;
+        if (charging)
+        {
+            var twist = c.CreateScalarKeyFrameAnimation();
+            twist.InsertKeyFrame(0, 0);
+            twist.InsertKeyFrame(0.18f, -16, ease);
+            twist.InsertKeyFrame(0.4f, 11, ease);
+            twist.InsertKeyFrame(0.62f, -5, ease);
+            twist.InsertKeyFrame(1, 0, ease);
+            twist.Duration = TimeSpan.FromMilliseconds(460);
+            twist.DelayTime = TimeSpan.FromMilliseconds(90);
+            v.StartAnimation("RotationAngleInDegrees", twist);
+            var flash = c.CreateScalarKeyFrameAnimation();
+            flash.InsertKeyFrame(0, 1);
+            flash.InsertKeyFrame(0.2f, 0.45f, ease);
+            flash.InsertKeyFrame(0.45f, 1, ease);
+            flash.InsertKeyFrame(1, 1);
+            flash.Duration = TimeSpan.FromMilliseconds(420);
+            flash.DelayTime = TimeSpan.FromMilliseconds(90);
+            v.StartAnimation("Opacity", flash);
+        }
+        else
+        {
+            var pulse = c.CreateScalarKeyFrameAnimation();
+            pulse.InsertKeyFrame(0, 1);
+            pulse.InsertKeyFrame(0.5f, 0.4f, ease);
+            pulse.InsertKeyFrame(1, 1, ease);
+            pulse.Duration = TimeSpan.FromMilliseconds(900);
+            pulse.IterationCount = 3;
+            pulse.IterationBehavior = AnimationIterationBehavior.Count;
+            pulse.DelayTime = TimeSpan.FromMilliseconds(150);
+            v.StartAnimation("Opacity", pulse);
+        }
+    }
+
+    private void StopPowerMotion()
+    {
+        if (!_powerMotion) return;
+        _powerMotion = false;
+        var v = Anim.VisualOf(_icon);
+        v.StopAnimation("RotationAngleInDegrees");
+        v.StopAnimation("Opacity");
+        v.RotationAngleInDegrees = 0;
+        v.Opacity = 1;
     }
 
     /// <summary>Values only (same layout): track, number, icon state, colours, glow.</summary>
@@ -369,7 +431,7 @@ public sealed class ActivityPillView : Grid
                 accent = low ? Theme.BatteryRed : charging ? Theme.ChargingColor : Theme.VolumeColor;
                 glow = low ? 0 : charging ? Theme.ActivityGlowOpacity : Theme.UnpluggedGlowOpacity;
                 _icon.Data = low ? Icons.BatteryLow : Icons.Bolt;
-                if (previous == null || previous.On != a.On) { _iconPop.Snap(Motion.BoltPopFrom); _iconPop.SetTarget(1, Motion.Pop); }
+                if (previous == null || previous.On != a.On) { _iconPop.Snap(Motion.BoltPopFrom); _iconPop.SetTarget(1, Motion.Pop); PlayPowerMotion(low, charging); }
                 _title.Text = a.Title;
                 SetSubtitle(a.Subtitle);
                 CountTo((a.Level ?? 0) * 100, "%", animate);

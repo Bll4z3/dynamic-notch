@@ -64,6 +64,7 @@ public sealed partial class NotchWindow
             StatusViewModel.ShowDateCollapsed = s.ShowDate;
             Vm.Status.Refresh();
         }
+        if (parts.HasFlag(ThemeService.Part.UsageRings)) ApplyUsageRings(animate);
         // Hover timings (Settings ▸ Customisation ▸ Behaviour) are read each time a timer starts
         // (HoverDelayMs / CollapseDelayMs below), so a change applies from the very next hover.
         // "Click to open notch" is read on each hover / click; re-apply so the hover lift follows it at once.

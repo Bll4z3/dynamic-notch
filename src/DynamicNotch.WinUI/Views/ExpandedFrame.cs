@@ -63,21 +63,28 @@ public sealed class ExpandedFrame : Grid
         _dateWrap.Margin = Theme.GapLeftS2;
         _dateWrap.VerticalAlignment = VerticalAlignment.Center;
         left.Children.Add(HeaderRing);
+        // Claude usage rings (Settings ▸ Customisation ▸ Claude usage rings), right of the battery ring, same size.
+        HeaderFiveHour = new UsageRing(UsageRing.Kind.FiveHour, Theme.HeaderRingSize, Theme.HeaderRingThickness) { Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+        HeaderWeekly = new UsageRing(UsageRing.Kind.Weekly, Theme.HeaderRingSize, Theme.HeaderRingThickness) { Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+        left.Children.Add(HeaderFiveHour);
+        left.Children.Add(HeaderWeekly);
         left.Children.Add(HeaderTime);
         left.Children.Add(_dateWrap);
         _header.Children.Add(left);
         // Right: the header icons, in the order chosen in Settings ▸ Layout (Settings always among them). Each
         // feature has one identical icon button; Ask and the palette slide in over the pages, the rest open in
         // the header pop-up. The bell carries a dot while there's unread. Reordering slides them into place.
-        _gear = new IconButton(26, Theme.IconSmall) { Icon = Icons.Settings, Foreground = Theme.SecondaryText, Command = vm.OpenSettingsCommand, Tooltip = "Settings" };
+        _gear = new IconButton(26, Theme.IconSmall) { Icon = Icons.Settings, Command = vm.OpenSettingsCommand, Tooltip = "Settings" };
         _iconViews[PageRegistry.SettingsId] = _gear;
+        AddIconLight(_gear);
         Motions.SlideIntoPlace(_gear);
         foreach (var def in PageRegistry.All)
         {
             var id = def.Id;
-            var button = new IconButton(26, Theme.IconSmall) { Icon = def.Icon, Foreground = Theme.SecondaryText, Tooltip = def.Name };
+            var button = new IconButton(26, Theme.IconSmall) { Icon = def.Icon, Tooltip = def.Name };
             button.Click += () => FeatureRequested?.Invoke(id);
             _iconButtons[id] = button;
+            AddIconLight(button);
             FrameworkElement host = button;
             if (id == PageId.Notifications)
             {
@@ -187,7 +194,14 @@ public sealed class ExpandedFrame : Grid
 
         Stagger.Add(_dateWrap, 0);
         Stagger.Add(_gearWrap, 0);
-        foreach (var (el, order) in Music.StaggerBlocks) Stagger.Add(el, order);
+        // The media player's blocks layer in after the art (fade, rise and a slight grow) and leave in reverse; the art
+        // itself is held while it takes the shared-element flight from the closed notch.
+        foreach (var (el, order) in Music.StaggerBlocks)
+        {
+            bool art = ReferenceEquals(el, Music.ArtStaggerElement);
+            Stagger.Add(el, order, scaleFrom: art || ReferenceEquals(el, Music.LyricsHostElement) ? 1 : Motion.MusicStaggerScale,
+                        hold: art ? () => Music.ArtFlightActive?.Invoke() == true : null, layered: true);
+        }
         foreach (var (el, order) in Shelf.StaggerBlocks) Stagger.Add(el, order);
         foreach (var (el, order) in Usage.StaggerBlocks) Stagger.Add(el, order);
         foreach (var (el, order) in FocusTimer.StaggerBlocks) Stagger.Add(el, order);
@@ -232,6 +246,8 @@ public sealed class ExpandedFrame : Grid
     }
 
     public BatteryRing HeaderRing { get; }
+    public UsageRing HeaderFiveHour { get; }
+    public UsageRing HeaderWeekly { get; }
     public CrossfadeText HeaderTime { get; }
     public MusicPage Music { get; }
     public ClipboardShelfPage Shelf { get; }
@@ -244,6 +260,26 @@ public sealed class ExpandedFrame : Grid
     public QuickActionsPanel QuickActions { get; }
     public AskPage Ask { get; }
     public CommandPaletteView Palette { get; }
+
+    /// <summary>
+    /// The usage rings are about to appear / disappear in the header: for a moment, the time and date glide to their new
+    /// spots instead of jumping (only then, so the date doesn't slide every time the clock's width changes).
+    /// </summary>
+    public void SlideHeaderOnce()
+    {
+        var els = new UIElement[] { HeaderTime, _dateWrap, HeaderFiveHour, HeaderWeekly };
+        foreach (var el in els) Motions.SlideIntoPlace(el, 320);
+        if (_slideEnd == null)
+        {
+            _slideEnd = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            _slideEnd.IsRepeating = false;
+            _slideEnd.Interval = TimeSpan.FromMilliseconds(700);
+            _slideEnd.Tick += (t, _) => { t.Stop(); foreach (var el in els) Anim.VisualOf(el).ImplicitAnimations = null; };
+        }
+        _slideEnd.Stop();
+        _slideEnd.Start();
+    }
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _slideEnd;
 
     /// <summary>A header icon was clicked (the window opens the feature as a pop-up or an overlay).</summary>
     public event Action<PageId>? FeatureRequested;
@@ -282,9 +318,46 @@ public sealed class ExpandedFrame : Grid
         foreach (var (id, b) in _iconButtons)
         {
             bool on = Popup.Current == id || id == PageId.Ask && _overlay == NotchOverlay.Ask || id == PageId.Palette && _overlay == NotchOverlay.Palette;
-            b.Foreground = on ? Theme.PrimaryText : Theme.SecondaryText;
-            b.Backing = on ? Theme.CardHoverBrush : null;
+            if (_lights.TryGetValue(b, out var l)) { l.Selected = on; l.Apply(); }
         }
+    }
+
+    // ---- Header icon states: no grey box; the glyph itself lights up -----------------------------------------------
+    private readonly Dictionary<IconButton, IconLight> _lights = new();
+
+    /// <summary>
+    /// A header icon's look: dimmed at rest, full brightness on hover, and while its feature is open it stays bright
+    /// and a little larger (a soft spring). No hover or selected fill behind it, only the press squash.
+    /// </summary>
+    private sealed class IconLight
+    {
+        public required CompSpring Lit, Grow;
+        public bool Hovered, Selected;
+        public void Apply()
+        {
+            Lit.SetTarget(Hovered || Selected ? 1 : 0, Motion.Hover);
+            Grow.SetTarget(Selected ? 1 : 0, Motion.Pop);
+        }
+    }
+
+    private void AddIconLight(IconButton b)
+    {
+        b.NoFill = true;
+        b.Foreground = Theme.PrimaryText;
+        var icon = b.IconElement;
+        var v = Anim.VisualOf(icon);
+        var c = v.Compositor;
+        var (lit, ls) = Motions.Value(c, Motion.Hover, 0);
+        var (grow, gs) = Motions.Value(c, Motion.Pop, 0);
+        Motions.CentreOrigin(icon);
+        // Rest ≈ the secondary text grey (A1 on F5); lit = full white.
+        v.StartAnimation("Opacity", Anim.Expr(c, "0.64 + 0.36 * Clamp(l.v, 0, 1)", ("l", ls)));
+        v.StartAnimation("Scale", Anim.Expr(c, "Vector3(1 + 0.12 * g.v, 1 + 0.12 * g.v, 1)", ("g", gs)));
+        var light = new IconLight { Lit = lit, Grow = grow };
+        _lights[b] = light;
+        b.PointerEntered += (_, _) => { light.Hovered = true; light.Apply(); };
+        b.PointerExited += (_, _) => { light.Hovered = false; light.Apply(); };
+        b.PointerCanceled += (_, _) => { light.Hovered = false; light.Apply(); };
     }
 
     /// <param name="other">The other overlay's spring: while it slides in over this layer (e.g. the palette opened

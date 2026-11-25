@@ -105,10 +105,18 @@ public static class Motions
 /// </summary>
 public sealed class StaggerGroup
 {
-    private readonly List<(int order, CompSpring spring)> _items = new();
+    private sealed record Item(double Order, CompSpring Spring, Func<bool>? Hold, bool Layered);
+    private readonly List<Item> _items = new();
 
-    /// <summary>Adds a block (a plain wrapper element: its visual's Opacity and Translation belong to the stagger).</summary>
-    public void Add(FrameworkElement el, int order)
+    /// <summary>
+    /// Adds a block (a plain wrapper element: its visual's Opacity and Translation belong to the stagger, and its Scale
+    /// too when <paramref name="scaleFrom"/> &lt; 1).
+    /// </summary>
+    /// <param name="scaleFrom">The block also grows in from this scale (about its centre).</param>
+    /// <param name="hold">While true, the block skips the fade: it's shown at once when the notch starts opening
+    /// (<see cref="Prime"/>) and stays while it closes (a shared element flying in and out carries it instead).</param>
+    /// <param name="layered">Closing, layered blocks leave in reverse order (last in, first out) instead of all at once.</param>
+    public void Add(FrameworkElement el, double order, double scaleFrom = 1, Func<bool>? hold = null, bool layered = false)
     {
         var visual = Anim.VisualOf(el, translation: true);
         var c = visual.Compositor;
@@ -117,20 +125,42 @@ public sealed class StaggerGroup
         var t = Anim.Expr(c, "Vector3(0, (1 - p.v) * R, 0)", ("p", set));
         t.SetScalarParameter("R", (float)Motion.StaggerRise);
         visual.StartAnimation("Translation", t);
-        _items.Add((order, spring));
-        _items.Sort((a, b) => a.order.CompareTo(b.order));
+        if (scaleFrom < 1)
+        {
+            Motions.CentreOrigin(el);
+            var s = Anim.Expr(c, "Vector3(S + (1 - S) * Clamp(p.v, 0, 1), S + (1 - S) * Clamp(p.v, 0, 1), 1)", ("p", set));
+            s.SetScalarParameter("S", (float)scaleFrom);
+            visual.StartAnimation("Scale", s);
+        }
+        _items.Add(new Item(order, spring, hold, layered));
+        _items.Sort((a, b) => a.Order.CompareTo(b.Order));
+    }
+
+    /// <summary>The notch started opening: held blocks show at once (their shared-element flight starts now).</summary>
+    public void Prime()
+    {
+        foreach (var i in _items) if (i.Hold?.Invoke() == true) i.Spring.Snap(1);
     }
 
     public void Show()
     {
         if (_items.Count == 0) return;
-        int first = _items[0].order;
-        foreach (var (order, spring) in _items)
-            spring.SetTarget(1, Motion.FadeIn, (order - first) * Motion.StaggerStepMs / 1000.0 * Motion.StaggerScale);
+        double first = _items[0].Order;
+        foreach (var i in _items)
+        {
+            if (i.Hold?.Invoke() == true && i.Spring.Target >= 1) continue;
+            i.Spring.SetTarget(1, Motion.FadeIn, (i.Order - first) * Motion.StaggerStepMs / 1000.0 * Motion.StaggerScale);
+        }
     }
 
     public void Hide()
     {
-        foreach (var (_, spring) in _items) spring.SetTarget(0, Motion.FadeOut);
+        double last = _items.Where(i => i.Layered).Select(i => i.Order).DefaultIfEmpty(0).Max();
+        foreach (var i in _items)
+        {
+            if (i.Hold?.Invoke() == true) continue;
+            double delay = i.Layered ? (last - i.Order) * Motion.StaggerHideStepMs / 1000.0 * Motion.StaggerScale : 0;
+            i.Spring.SetTarget(0, Motion.FadeOut, delay);
+        }
     }
 }

@@ -24,7 +24,7 @@ namespace DynamicNotch.Services;
 public sealed class ThemeService
 {
     [Flags]
-    public enum Part { None = 0, Accent = 1, Radius = 2, Motion = 4, Surface = 8, Glow = 16, Visualizer = 32, Layout = 64, Collapsed = 128, Behaviour = 256, Performance = 1024, Lyrics = 2048, All = 0xDFF }
+    public enum Part { None = 0, Accent = 1, Radius = 2, Motion = 4, Surface = 8, Glow = 16, Visualizer = 32, Layout = 64, Collapsed = 128, Behaviour = 256, Performance = 1024, Lyrics = 2048, UsageRings = 4096, All = 0x1DFF }
 
     private readonly SettingsService _settings;
     private readonly List<WeakReference<FrameworkElement>> _roots = new();
@@ -126,7 +126,8 @@ public sealed class ThemeService
         if (a.HoverDelayMs != b.HoverDelayMs || a.CollapseDelayMs != b.CollapseDelayMs || a.ClickToOpen != b.ClickToOpen) parts |= Part.Behaviour;
         if (a.PerformanceMode != b.PerformanceMode) parts |= Part.Performance;
         if (a.LyricsOnClosedNotch != b.LyricsOnClosedNotch || a.LyricsWordByWord != b.LyricsWordByWord || a.LyricsTextSize != b.LyricsTextSize
-            || a.LyricsOffsetMs != b.LyricsOffsetMs) parts |= Part.Lyrics;
+            || a.LyricsOffsetMs != b.LyricsOffsetMs || a.LyricsGlow != b.LyricsGlow) parts |= Part.Lyrics;
+        if (a.UsageRingWeekly != b.UsageRingWeekly || a.UsageRingFiveHour != b.UsageRingFiveHour || a.UsageRingPlace != b.UsageRingPlace) parts |= Part.UsageRings;
         if (parts != Part.None) Changed?.Invoke(parts);
     }
 

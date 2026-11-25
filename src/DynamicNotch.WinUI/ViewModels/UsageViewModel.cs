@@ -17,6 +17,7 @@ public sealed class UsageViewModel : ObservableObject
     private DateTimeOffset _nextDue = DateTimeOffset.MinValue;
     private int _failures;
     private bool _visible, _enabled = true, _busy;
+    private bool _pageEnabled = true, _ringsWanted, _ringsOnScreen;
 
     public UsageViewModel(ClaudeUsageService service)
     {
@@ -48,9 +49,34 @@ public sealed class UsageViewModel : ObservableObject
     /// </summary>
     public void SetEnabled(bool enabled)
     {
+        _pageEnabled = enabled;
+        ApplyEnabled();
+    }
+
+    /// <summary>
+    /// The usage rings next to the battery ring (Settings ▸ Customisation ▸ Claude usage rings) read this same data.
+    /// <paramref name="wanted"/>: at least one ring is switched on somewhere (fetching is allowed even with the page
+    /// off); <paramref name="onScreen"/>: a ring is showing right now, so the numbers keep refreshing on the usual
+    /// schedule (the same polling and back-off as the page).
+    /// </summary>
+    public void SetRingDemand(bool wanted, bool onScreen)
+    {
+        bool visibleBefore = _visible || _ringsOnScreen;
+        _ringsWanted = wanted;
+        _ringsOnScreen = wanted && onScreen;
+        ApplyEnabled();
+        bool visibleNow = _visible || _ringsOnScreen;
+        if (visibleNow && !visibleBefore) Schedule();
+        else if (!visibleNow) _timer.Stop();
+    }
+
+    private void ApplyEnabled()
+    {
+        bool enabled = _pageEnabled || _ringsWanted;
+        bool was = _enabled;
         _enabled = enabled;
         if (!enabled) { _timer.Stop(); _cts?.Cancel(); }
-        else if (Snapshot == null && UnavailableReason == null) _ = RefreshAsync();
+        else if (Snapshot == null && UnavailableReason == null && (!was || !_busy)) _ = RefreshAsync();
     }
 
     /// <summary>True while the notch is open on this page: polling runs only then.</summary>
@@ -61,7 +87,7 @@ public sealed class UsageViewModel : ObservableObject
         {
             if (_visible == value) return;
             _visible = value;
-            if (value) Schedule(); else _timer.Stop();
+            if (value) Schedule(); else if (!_ringsOnScreen) _timer.Stop();
             OnPropertyChanged();
         }
     }
@@ -69,7 +95,7 @@ public sealed class UsageViewModel : ObservableObject
     private void Schedule()
     {
         _timer.Stop();
-        if (!_visible || !_enabled || _busy) return;
+        if (!(_visible || _ringsOnScreen) || !_enabled || _busy) return;
         var wait = _nextDue - DateTimeOffset.Now;
         if (wait <= TimeSpan.Zero) { _ = RefreshAsync(); return; }
         _timer.Interval = wait;

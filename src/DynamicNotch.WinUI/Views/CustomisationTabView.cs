@@ -61,6 +61,7 @@ internal sealed class CustomisationTabView : Grid
         AddSection(stack, "Font", BuildFont());
         AddSection(stack, "Notch", BuildNotch());
         AddSection(stack, "Closed notch", BuildClosedNotch());
+        AddSection(stack, "Claude usage rings", BuildUsageRings());
         AddSection(stack, "Lyrics", BuildLyrics());
         AddSection(stack, "Motion", BuildMotion());
         AddSection(stack, "Behaviour", BuildBehaviour());
@@ -334,6 +335,27 @@ internal sealed class CustomisationTabView : Grid
         yield return Choice("Clock format", null, s => s.ClockFormat, (s, v) => s.ClockFormat = v, demo, ("system", "System"), ("12", "12-hour"), ("24", "24-hour"));
     }
 
+    // ---- Claude usage rings ------------------------------------------------------------------------------------
+    /// <summary>
+    /// Rings next to the battery ring with your Claude plan's usage. They read the Claude Usage page's own data (same
+    /// request, polling and back-off), so they live here beside the battery ring and clock options rather than on a
+    /// page of their own.
+    /// </summary>
+    private IEnumerable<UIElement> BuildUsageRings()
+    {
+        Action demo = () => _theme.PlayDemo(ThemeService.Part.Collapsed);
+        yield return Toggle("Weekly usage", "A purple ring marked W", s => s.UsageRingWeekly, (s, v) => s.UsageRingWeekly = v, demo);
+        yield return Toggle("5-hour usage", "A blue ring marked 5h", s => s.UsageRingFiveHour, (s, v) => s.UsageRingFiveHour = v, demo);
+        yield return Choice("Show on", null, s => s.UsageRingPlace, (s, v) => s.UsageRingPlace = v, demo,
+            ("closed", "Closed notch"), ("open", "Open notch"), ("both", "Both"));
+        yield return Extend(new TextBlock
+        {
+            Text = "Right of the battery ring. They turn amber from 60% and red from 85%. Hover one in the open notch for the exact % and when it resets. Uses the same data as the Claude Usage page.",
+            Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.TertiaryText, TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.None, Margin = new Thickness(0, 0, 0, Theme.S2),
+        });
+    }
+
     // ---- Lyrics ----------------------------------------------------------------------------------------------
     private IEnumerable<UIElement> BuildLyrics()
     {
@@ -343,6 +365,8 @@ internal sealed class CustomisationTabView : Grid
             s => s.LyricsWordByWord, (s, v) => s.LyricsWordByWord = v);
         yield return Slider("Lyrics text size", null, 80, 130, 5, v => $"{v:0}%",
             s => s.LyricsTextSize * 100, (s, v) => s.LyricsTextSize = Math.Round(v / 100, 2));
+        yield return Slider("Lyrics glow intensity", "Soft light in the album's colours around the current line and the word being sung. 0% turns it off.",
+            0, 200, 5, v => v <= 0 ? "Off" : $"{v:0}%", s => s.LyricsGlow * 100, (s, v) => s.LyricsGlow = Math.Round(v / 100, 2));
         yield return Slider("Sync offset", "Lyrics early? Raise it to delay them. Late? Lower it.", -2000, 2000, 50,
             v => v == 0 ? "0 ms" : $"{v:+0;-0} ms", s => s.LyricsOffsetMs, (s, v) => s.LyricsOffsetMs = (int)Math.Round(v));
 

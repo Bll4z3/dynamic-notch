@@ -44,8 +44,12 @@ public sealed partial class NotchWindow
             page: () => -1, allowed: () => Vm.Overlay == ViewModels.NotchOverlay.None);
         AddMatched(CollapsedTime, _frame.HeaderTime, edge: 0, parentShifted: false, want: 0,
             page: () => -1, allowed: () => Vm.Overlay == ViewModels.NotchOverlay.None);
-        AddMatched(MiniArt, _frame.Music.ArtElement, edge: -1, parentShifted: true, want: 1,
-            page: () => Vm.Pages.IndexOf(PageId.Music), allowed: () => Vm.Music.IsPlaying && !Vm.MinimalNotch && !CompactTimerShown && !_lyricOnClosed, pageScrolled: true);
+        // The album art: a shared-element morph on its own spring ("ArtFly"), with its corner radius and shadow
+        // following (MusicPage.BindArtFlight). Its stagger block is held meanwhile, so it's visible from the first frame.
+        var art = AddMatched(MiniArt, _frame.Music.ArtElement, edge: -1, parentShifted: true, want: 1,
+            page: () => Vm.Pages.IndexOf(PageId.Music), allowed: () => ArtFlightAllowed, pageScrolled: true, flight: "ArtFly");
+        _frame.Music.BindArtFlight(art.M);
+        _frame.Music.ArtFlightActive = () => ArtFlightAllowed && Vm.IsMusicPage;
         UpdateMatchedFlags();
     }
 
@@ -53,8 +57,11 @@ public sealed partial class NotchWindow
     /// <param name="parentShifted">True when the collapsed element's parent already carries the right-edge shift.</param>
     /// <param name="want">1 = the pair flies only near <paramref name="page"/>; 0 = it flies except near it.</param>
     /// <param name="pageScrolled">True when the expanded element sits in the pager (moves with the page spring).</param>
-    private void AddMatched(FrameworkElement collapsed, FrameworkElement expanded, int edge, bool parentShifted, int want,
-                            Func<int> page, Func<bool> allowed, bool pageScrolled = false)
+    /// <param name="flight">A notch property (0..1) that drives this pair's flight instead of the height's progress: its
+    /// own spring, so the pair moves with momentum but never overshoots, and the two cross-fade within the first
+    /// moment of the flight (a true shared element) instead of across the middle of the morph.</param>
+    private Matched AddMatched(FrameworkElement collapsed, FrameworkElement expanded, int edge, bool parentShifted, int want,
+                            Func<int> page, Func<bool> allowed, bool pageScrolled = false, string? flight = null)
     {
         var c = _shape.Compositor;
         var m = c.CreatePropertySet();
@@ -74,7 +81,7 @@ public sealed partial class NotchWindow
         Chain(m, "es", $"({CPW} - N.W) / 2");
         Chain(m, "onPage", "M.Near >= 0 ? (Abs(N.Page - M.Near) < 0.5 ? 1 : 0) : 0");
         Chain(m, "act", "M.Active * (M.Want * M.onPage + (1 - M.Want) * (1 - M.onPage))");
-        Chain(m, "t", "M.act * M.p + (1 - M.act)"); // inactive: the expanded element rests in place
+        Chain(m, "t", flight != null ? $"M.act * Clamp(N.{flight}, 0, 1) + (1 - M.act)" : "M.act * M.p + (1 - M.act)"); // inactive: the expanded element rests in place
         Chain(m, "acx", $"M.ax + M.aw / 2 + {edge} * M.es");
         Chain(m, "acy", "M.ay + M.ah / 2");
         Chain(m, "bcx", pageScrolled ? "M.bx + M.bw / 2 - N.Page * N.Slot" : "M.bx + M.bw / 2");
@@ -89,21 +96,29 @@ public sealed partial class NotchWindow
         string cs = "(M.act * M.ch / M.ah + (1 - M.act))";
         Bind(collapsed, "Scale", $"Vector3({cs}, {cs}, 1)", m, translation: false);
         Bind(collapsed, "Translation", $"Vector3(M.act * M.ccx + (1 - M.act) * M.acx - (M.ax + M.aw / 2){parent}, M.act * (M.ccy - M.acy), 0)", m, translation: true);
-        Bind(collapsed, "Opacity", $"M.act * (1 - {Anim.SmoothStep(0, 0.45, "M.p")}) + (1 - M.act)", m, translation: false);
+        Bind(collapsed, "Opacity", flight != null
+            ? $"M.act * (1 - {Anim.SmoothStep(0.04, 0.16, "M.t")}) + (1 - M.act)"
+            : $"M.act * (1 - {Anim.SmoothStep(0, 0.45, "M.p")}) + (1 - M.act)", m, translation: false);
 
         // Expanded element: starts at the collapsed element's spot and size, settles in place.
         Motions.CentreOrigin(expanded);
         string bs = "(M.act * M.ch / M.bh + (1 - M.act))";
         Bind(expanded, "Scale", $"Vector3({bs}, {bs}, 1)", m, translation: false);
         Bind(expanded, "Translation", "Vector3(M.act * (M.ccx - M.bcx), M.act * (M.ccy - M.bcy), 0)", m, translation: true);
-        Bind(expanded, "Opacity", Anim.SmoothStep(Motion.MatchedFadeFrom, Motion.MatchedFadeTo, "M.p"), m, translation: false);
+        Bind(expanded, "Opacity", flight != null
+            ? $"M.act * {Anim.SmoothStep(0, 0.07, "M.t")} + (1 - M.act) * {Anim.SmoothStep(Motion.MatchedFadeFrom, Motion.MatchedFadeTo, "M.p")}"
+            : Anim.SmoothStep(Motion.MatchedFadeFrom, Motion.MatchedFadeTo, "M.p"), m, translation: false);
 
         // Re-measure whenever either side's layout changes (e.g. the clock text width).
         collapsed.SizeChanged += (_, _) => Measure(pair);
         expanded.SizeChanged += (_, _) => Measure(pair);
         collapsed.Loaded += (_, _) => Measure(pair);
         expanded.Loaded += (_, _) => Measure(pair);
+        return pair;
     }
+
+    /// <summary>The album art flies between the closed notch's mini art and the media player (music playing, mini art shown).</summary>
+    private bool ArtFlightAllowed => Vm.Music.IsPlaying && !Vm.MinimalNotch && !CompactTimerShown && !_lyricOnClosed;
 
     private void Chain(CompositionPropertySet m, string name, string expression)
     {

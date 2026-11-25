@@ -28,7 +28,7 @@ public sealed partial class NotchWindow
         // "Lyric" (0..1): the closed notch's line instead of its usual content (CollapsedLayer fades by 1 - Lyric).
         Anim.VisualOf(_collapsedLyric).StartAnimation("Opacity", Anim.Expr(_shape.Compositor, "Clamp(N.Collapsed, 0, 1) * Clamp(N.Lyric, 0, 1)", ("N", n)));
         Vm.Lyrics.PropertyChanged += OnLyricsChanged;
-        _frame.LayoutChanged += () => { ApplyTargets(); UpdatePinnedRect(); };
+        _frame.LayoutChanged += () => { _lyricsResize = true; ApplyTargets(); _lyricsResize = false; UpdatePinnedRect(); };
         _frame.Glow.LyricVocal = Vm.Lyrics.VocalSignal;
     }
 

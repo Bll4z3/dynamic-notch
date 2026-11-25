@@ -126,6 +126,8 @@ public static class Theme
     public static readonly Color BatteryAmber = Rgb(0xFF, 0xB0, 0x20);
     public static readonly Color BatteryRed = Rgb(0xFF, 0x45, 0x3A);
     public const double NotchRingSize = 16, NotchRingThickness = 2;
+    /// <summary>Space between the battery ring and the Claude usage rings on the closed notch (and between those rings).</summary>
+    public const double UsageRingGap = 5;
     public const double HeaderRingSize = 20, HeaderRingThickness = 2;
     public const double DeviceRingSize = 26, DeviceRingThickness = 1.75;
     public const double RingNumberFontSize = 7.5;

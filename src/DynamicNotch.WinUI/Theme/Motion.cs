@@ -104,6 +104,18 @@ public static class Motion
     public const double ContentRevealThreshold = 0.35;
     /// <summary>Shared (matched) elements fade in across this slice of the morph.</summary>
     public const double MatchedFadeFrom = 0.25, MatchedFadeTo = 0.85;
+    /// <summary>Closing: layered blocks leave in reverse order, this far apart (ms), before the art flies home.</summary>
+    public const int StaggerHideStepMs = 14;
+    /// <summary>The media player's blocks (title, progress, controls) grow in from this scale as they fade and rise.</summary>
+    public const double MusicStaggerScale = 0.965;
+
+    /// <summary>
+    /// The album art's shared-element flight between the closed notch and the media player: its own spring (not the
+    /// height's), so it has momentum without the shape's slight overshoot (no wobble, no snap at the end). A touch
+    /// slower than the shape opening, so the shape always has room ahead of it; closing is quicker.
+    /// </summary>
+    public static readonly SpringPreset ArtFlyOpen = SpringPreset.FromResponse(0.54, 0.95);
+    public static readonly SpringPreset ArtFlyClose = SpringPreset.FromResponse(0.42, 1.0);
 
     // ---- Behaviour timings / amounts -------------------------------------------------------
     public const int HoverExpandDelayMs = 60;
@@ -252,6 +264,15 @@ public static class Motion
     // ---- Lyrics ----
     /// <summary>The media player morphing between its normal layout and the lyrics layout (and the notch growing for it).</summary>
     public static readonly SpringPreset LyricsMorph = SpringPreset.FromResponse(0.52, 0.86);
+    /// <summary>
+    /// The lyrics layout morph moves each block on a curved path, one axis leading the other, so nothing crosses the
+    /// album art: opening, the art lifts and shrinks while the text drops below it (lead), then everything slides
+    /// sideways into place (follow, <see cref="LyricsAxisDelay"/> later). Closing plays the same paths in reverse.
+    /// </summary>
+    /// (Tuned by simulating every block's path against the art's: no overlap at any frame, opening or closing.)
+    public static readonly SpringPreset LyricsLead = SpringPreset.FromResponse(0.32, 0.94);
+    public static readonly SpringPreset LyricsFollow = SpringPreset.FromResponse(0.42, 0.9);
+    public const double LyricsAxisDelay = 0.16;
     /// <summary>Lines scrolling to the current one (lower lines follow a beat later, see LyricsPanel.ScrollStagger).</summary>
     public static readonly SpringPreset LyricScroll = SpringPreset.FromResponse(0.62, 0.9);
     /// <summary>Manual scrolling (the mouse wheel): quicker, so the lines keep up with the wheel.</summary>

@@ -92,6 +92,7 @@ public partial class App : Application
         var claude = new ClaudeService(secrets);
         var focus = new FocusTimerViewModel(settings);
         var audio = Track(new AudioService());
+        var hardware = Track(new DeviceWatchService()); // USB drives and displays coming and going (pills)
         var brightness = Track(new BrightnessService());
         var downloads = Track(new DownloadWatcherService());
         var quick = Track(new QuickActionsService());
@@ -130,8 +131,21 @@ public partial class App : Application
         foreach (var src in new Action<Action<PillRequest>>[]
                  {
                      h => network.Pill += h, h => vpn.Pill += h, h => bluetooth.Pill += h, h => notifications.Pill += h,
+                     h => hardware.Pill += h,
                  })
             src(vm.EnqueuePill);
+
+        // Audio output switched (speakers ⇄ headphones…): a pill, unless a Bluetooth device just connected or left and
+        // already said so (its pill covers the switch it causes).
+        long lastDevicePill = 0;
+        bluetooth.Pill += _ => lastDevicePill = Environment.TickCount64;
+        audio.OutputChanged += name =>
+        {
+            if (Environment.TickCount64 - lastDevicePill < 4000) return;
+            string lower = name.ToLowerInvariant();
+            bool phones = new[] { "headphone", "headset", "earbud", "buds", "airpods", "earphone" }.Any(lower.Contains);
+            vm.EnqueuePill(new PillRequest(PillSource.Device, "Audio output", name, phones ? Icons.Headphone : Icons.Speaker, Anim: PillAnim.AudioSwitch));
+        };
 
         // ---- Activity pills: every source feeds the ONE activity host ----
         audio.VolumeChanged += v => activity.Show(new Activity(ActivityKind.Volume, "Volume", v.Level, On: v.Muted, OnSet: audio.SetVolume));
@@ -303,6 +317,7 @@ public partial class App : Application
         bluetooth.Start();
         power.Start();
         audio.Start();
+        hardware.Start();
         brightness.Start();
         brightnessKeys.Start();
         brightnessKeys.FallbackKeyTick = () => keys.LastKeyTick; // PCs whose brightness keys aren't HID buttons

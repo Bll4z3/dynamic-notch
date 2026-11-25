@@ -67,6 +67,16 @@ public sealed class CustomSettings
     public double LyricsTextSize { get; set; } = 1.0;
     /// <summary>Sync offset in ms: positive shows the lyrics later, negative sooner.</summary>
     public int LyricsOffsetMs { get; set; }
+    /// <summary>Soft album-coloured glow on the current line and the word being sung (0 = none, 1 = default, up to 2).</summary>
+    public double LyricsGlow { get; set; } = 1.0;
+
+    // ---- Claude usage rings (next to the battery ring) ----
+    /// <summary>Show the weekly limit's ring.</summary>
+    public bool UsageRingWeekly { get; set; }
+    /// <summary>Show the 5-hour session's ring.</summary>
+    public bool UsageRingFiveHour { get; set; }
+    /// <summary>Where the rings show: closed (the closed notch), open (the open notch's header) or both.</summary>
+    public string UsageRingPlace { get; set; } = "both";
 
     // ---- Collapsed notch ----
     public bool ShowBatteryRing { get; set; } = true;
@@ -118,6 +128,8 @@ public sealed class CustomSettings
         ClockFormat = Pick(ClockFormat, "system", "system", "12", "24");
         LyricsTextSize = C(LyricsTextSize, 0.8, 1.3, 1);
         LyricsOffsetMs = (int)C(LyricsOffsetMs, -3000, 3000, 0);
+        LyricsGlow = C(LyricsGlow, 0, 2, 1);
+        UsageRingPlace = Pick(UsageRingPlace, "both", "closed", "open", "both");
         HoverDelayMs = (int)C(HoverDelayMs, 0, 600, Motion.HoverExpandDelayMs);
         CollapseDelayMs = (int)C(CollapseDelayMs, 150, 2000, Motion.HoverCollapseDelayMs);
         Monitor = Pick(Monitor, "primary", "primary", "mouse");

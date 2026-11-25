@@ -57,6 +57,10 @@ public sealed class IconButton : Grid
     };
 
     public Brush? Backing { get => _back.Background; set => _back.Background = value; }
+    /// <summary>No hover / pressed fill at all (the header icons light the icon itself instead).</summary>
+    public bool NoFill { set => _fill.Background = value ? null : Theme.CardHoverBrush; }
+    /// <summary>The icon element (for motion on the glyph itself).</summary>
+    public FrameworkElement IconElement => _icon;
     public CornerRadius Radius { get => _fill.CornerRadius; set => _fill.CornerRadius = _back.CornerRadius = value; }
     public string? Icon { get => _icon.Data; set => _icon.Data = value; }
     public double IconSize { get => _icon.Size; set => _icon.Size = value; }

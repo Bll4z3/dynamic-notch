@@ -81,7 +81,8 @@ public sealed class LyricsViewModel : ObservableObject
         set
         {
             if (!Set(ref _isOpen, value)) return;
-            _settings.Update(s => s.LyricsPanelOpen = value);
+            // Saved a moment later, so the click that toggles the panel never waits on a file write.
+            _settings.UpdateDeferred(s => s.LyricsPanelOpen = value);
             UpdateTicking();
         }
     }
@@ -111,6 +112,8 @@ public sealed class LyricsViewModel : ObservableObject
     public double TextScale { get; private set; } = 1;
     public double OffsetSeconds { get; private set; }
     public bool ShowOnClosedNotch { get; private set; } = true;
+    /// <summary>Settings ▸ Customisation ▸ Lyrics glow intensity (0 = none, 1 = default, up to 2).</summary>
+    public double GlowIntensity { get; private set; } = 1;
 
     public void ApplySettings(CustomSettings s)
     {
@@ -120,6 +123,8 @@ public sealed class LyricsViewModel : ObservableObject
         TextScale = s.LyricsTextSize;
         OffsetSeconds = s.LyricsOffsetMs / 1000.0;
         ShowOnClosedNotch = s.LyricsOnClosedNotch;
+        GlowIntensity = s.LyricsGlow;
+        Clock?.InsertScalar("Gi", (float)GlowIntensity);
         if (offset) { PushClock(); UpdateActive(jump: true); }
         if (display)
         {
@@ -250,6 +255,7 @@ public sealed class LyricsViewModel : ObservableObject
         Clock.InsertScalar("T", 0);
         Clock.InsertScalar("V", 0);
         Clock.InsertScalar("H", 0);
+        Clock.InsertScalar("Gi", (float)GlowIntensity); // the lyrics glow intensity (live: every glow expression reads it)
         PushClock();
     }
 
