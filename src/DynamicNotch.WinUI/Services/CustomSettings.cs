@@ -34,6 +34,22 @@ public sealed class CustomSettings
     public double ShadowIntensity { get; set; } = 1.0;
     public bool GlowEnabled { get; set; } = true;
     public double GlowIntensity { get; set; } = 1.0;
+    /// <summary>The media player's glow pulses with whatever is playing (system audio loopback).</summary>
+    public bool MusicReactiveGlow { get; set; } = true;
+    /// <summary>The music-reactive glow's look: visualiser (default, every effect), club (bigger punches, shockwaves and
+    /// drops) or chill (the album-art glow, the vocal aurora and a gentle bass only).</summary>
+    public string GlowStyle { get; set; } = "visualiser";
+    /// <summary>How readily beats and onsets trigger (0..1).</summary>
+    public double BeatSensitivity { get; set; } = 0.5;
+    /// <summary>The music glow's effect groups.</summary>
+    public bool GlowKick { get; set; } = true;
+    public bool GlowBass { get; set; } = true;
+    public bool GlowSnare { get; set; } = true;
+    public bool GlowVocal { get; set; } = true;
+    public bool GlowSparkles { get; set; } = true;
+    public bool GlowDrops { get; set; } = true;
+    /// <summary>Live analysis overlay on the media page (levels and onset flashes).</summary>
+    public bool GlowDebug { get; set; }
     /// <summary>bars (default), wave, off.</summary>
     public string Visualizer { get; set; } = "bars";
     /// <summary>album (default) or accent.</summary>
@@ -41,6 +57,16 @@ public sealed class CustomSettings
     public double NotchScale { get; set; } = 1.0;
     /// <summary>Collapsed visualiser colour: accent (default) or white.</summary>
     public string VisualizerColor { get; set; } = "accent";
+
+    // ---- Lyrics ----
+    /// <summary>The closed notch shows the line being sung (not in minimal mode).</summary>
+    public bool LyricsOnClosedNotch { get; set; } = true;
+    /// <summary>Words light up one by one as they're sung (off: the whole line lights at once).</summary>
+    public bool LyricsWordByWord { get; set; } = true;
+    /// <summary>Lyrics panel text size, as a multiple of the default (0.8..1.3).</summary>
+    public double LyricsTextSize { get; set; } = 1.0;
+    /// <summary>Sync offset in ms: positive shows the lyrics later, negative sooner.</summary>
+    public int LyricsOffsetMs { get; set; }
 
     // ---- Collapsed notch ----
     public bool ShowBatteryRing { get; set; } = true;
@@ -52,6 +78,8 @@ public sealed class CustomSettings
     // ---- Behaviour ----
     public int HoverDelayMs { get; set; } = Motion.HoverExpandDelayMs;
     public int CollapseDelayMs { get; set; } = Motion.HoverCollapseDelayMs;
+    /// <summary>Hovering doesn't open the notch; a click does (closing is unchanged).</summary>
+    public bool ClickToOpen { get; set; }
     /// <summary>primary (default) or mouse (the monitor under the pointer at start-up / display change).</summary>
     public string Monitor { get; set; } = "primary";
 
@@ -83,9 +111,13 @@ public sealed class CustomSettings
         GlowIntensity = C(GlowIntensity, 0, 1.5, 1);
         Visualizer = Pick(Visualizer, "bars", "bars", "wave", "off");
         GlowSource = Pick(GlowSource, "album", "album", "accent");
+        GlowStyle = Pick(GlowStyle, "visualiser", "visualiser", "club", "chill");
+        BeatSensitivity = C(BeatSensitivity, 0, 1, 0.5);
         NotchScale = C(NotchScale, 0.85, 1.25, 1);
         VisualizerColor = Pick(VisualizerColor, "accent", "accent", "white");
         ClockFormat = Pick(ClockFormat, "system", "system", "12", "24");
+        LyricsTextSize = C(LyricsTextSize, 0.8, 1.3, 1);
+        LyricsOffsetMs = (int)C(LyricsOffsetMs, -3000, 3000, 0);
         HoverDelayMs = (int)C(HoverDelayMs, 0, 600, Motion.HoverExpandDelayMs);
         CollapseDelayMs = (int)C(CollapseDelayMs, 150, 2000, Motion.HoverCollapseDelayMs);
         Monitor = Pick(Monitor, "primary", "primary", "mouse");

@@ -34,7 +34,22 @@ public partial class App : Application
             e.Handled = true;
         };
         TaskScheduler.UnobservedTaskException += (_, e) => { LogError(e.Exception); e.SetObserved(); };
+        // Profile mode: every argument / COM / disposed-object exception, where it was thrown (some escape through
+        // dispatcher callbacks as a fail-fast that never reaches UnhandledException, so this is the only trace).
+        if (Services.MusicReactiveService.Profile)
+        {
+            AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+            {
+                if (_inFirstChance || e.Exception is not (ArgumentException or System.Runtime.InteropServices.COMException or ObjectDisposedException or InvalidOperationException or NullReferenceException or IndexOutOfRangeException)) return;
+                _inFirstChance = true;
+                try { Services.MusicReactiveService.Log($"first-chance {e.Exception.GetType().Name} (0x{e.Exception.HResult:X8}): {e.Exception.Message}{Environment.NewLine}{Environment.StackTrace}"); }
+                catch { }
+                finally { _inFirstChance = false; }
+            };
+        }
     }
+
+    [ThreadStatic] private static bool _inFirstChance;
 
     public static void LogError(Exception ex)
     {
@@ -93,6 +108,7 @@ public partial class App : Application
         var spotify = new SpotifyService(settings);
         var musicVm = new MusicViewModel(media);
         var spotifyLike = new SpotifyLikeViewModel(musicVm, spotify);
+        var lyrics = new LyricsViewModel(media, new Services.Lyrics.LyricsService(), settings);
         var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus, updates, fonts, theme);
         settingsVm.General.Spotify = spotify;
         spotifyLike.ConnectRequested += () => Views.SettingsWindow.ShowSingle(settingsVm);
@@ -109,7 +125,7 @@ public partial class App : Application
             new UsageViewModel(new ClaudeUsageService()),
             focus,
             activity,
-            hub) { Screenshots = shots, QuickTimer = quickTimer, SpotifyLike = spotifyLike, Palette = new CommandPaletteViewModel(settings, clipVm, shots, claude, quickTimer) };
+            hub) { Screenshots = shots, QuickTimer = quickTimer, SpotifyLike = spotifyLike, Lyrics = lyrics, Palette = new CommandPaletteViewModel(settings, clipVm, shots, claude, quickTimer) };
 
         foreach (var src in new Action<Action<PillRequest>>[]
                  {
@@ -394,8 +410,9 @@ public partial class App : Application
         if (settingsArg >= 0)
         {
             string tab = settingsArg + 1 < _args.Length ? _args[settingsArg + 1].ToLowerInvariant() : "";
-            int tabIndex = tab switch { "custom" => 1, "key" => 2, "layout" => 3, "pages" => 3, "palette" => 4, "pills" => 5, "focus" => 6, "updates" => 7, _ => 0 };
-            settingsVm.SelectedTab = settingsVm.Tabs[tabIndex];
+            int tabIndex = tab switch { "custom" => 1, "layout" => 2, "pages" => 2, "palette" => 3, "pills" => 4, "focus" => 5, "updates" => 6, _ => 0 };
+            if (tab == "key") settingsVm.SelectApiKey(); // the key lives in General now
+            else settingsVm.SelectedTab = settingsVm.Tabs[tabIndex];
             Views.SettingsWindow.ShowSingle(settingsVm);
         }
         // Dev: `--ask-demo [error|thinking] [focus|select]` opens Ask (pinned; with `focus`, as the hotkey does) and plays a local, canned

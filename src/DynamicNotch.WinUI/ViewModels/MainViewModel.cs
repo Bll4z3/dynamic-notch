@@ -75,6 +75,8 @@ public sealed class MainViewModel : ObservableObject
     public QuickTimerViewModel QuickTimer { get; init; } = null!;
     /// <summary>The media player's Spotify Like button.</summary>
     public SpotifyLikeViewModel SpotifyLike { get; init; } = null!;
+    /// <summary>Synced lyrics for whatever plays (the media player's lyrics panel and the closed notch's line).</summary>
+    public LyricsViewModel Lyrics { get; init; } = null!;
     /// <summary>The screenshot shelf (the Screenshots page).</summary>
     public ScreenshotShelfViewModel Screenshots { get; init; } = null!;
 

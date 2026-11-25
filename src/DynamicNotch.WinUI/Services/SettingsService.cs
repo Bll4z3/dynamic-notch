@@ -64,6 +64,9 @@ public sealed class AppSettings
     public List<string> HeaderIconOrder { get; set; } = new();
     public List<string> HiddenHeaderIcons { get; set; } = new();
 
+    // ---- Lyrics: the panel stays open (or closed) between songs and sessions ----
+    public bool LyricsPanelOpen { get; set; }
+
     // ---- Spotify (Settings ▸ General): your own Spotify app's Client ID, for the Like button ----
     public string? SpotifyClientId { get; set; }
 

@@ -27,7 +27,7 @@ public sealed class SettingsViewModel : ObservableObject
         {
             new("General", Icons.Settings, General),
             new("Customisation", Icons.Palette, Customisation),
-            new("Claude API key", Icons.Key, ApiKey),
+            // (The Claude API key is a section of General: ApiKey is shown there.)
             new("Layout", Icons.Dashboard, Layout),
             new("Command Palette", Icons.Search, PaletteTab),
             new("Pills", Icons.Bell, Pills),
@@ -49,7 +49,15 @@ public sealed class SettingsViewModel : ObservableObject
 
     /// <summary>Selects the Updates tab (tray "Check for updates…", update pill).</summary>
     public void SelectUpdates() => SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, Updates));
-    public void SelectApiKey() => SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, ApiKey));
+    /// <summary>Ask needs a key: General, with its Claude API key box focused (see <see cref="ApiKeyFocusPending"/>).</summary>
+    public void SelectApiKey()
+    {
+        ApiKeyFocusPending = true;
+        SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, General));
+    }
+
+    /// <summary>Set by <see cref="SelectApiKey"/>; the window focuses the key box once General is showing, then clears it.</summary>
+    public bool ApiKeyFocusPending { get; set; }
 
     private SettingsTab _selected;
     public SettingsTab SelectedTab

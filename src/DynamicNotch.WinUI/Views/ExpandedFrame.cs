@@ -110,7 +110,8 @@ public sealed class ExpandedFrame : Grid
         _content.Children.Add(_viewport);
         _viewport.SizeChanged += (_, e) =>
         {
-            _viewportClip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
+            // Room below for the media player's lyrics layout (the notch grows by that much; the body clip still applies).
+            _viewportClip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height + Theme.LyricsExtraHeight);
             _n.InsertScalar("Slot", (float)e.NewSize.Width);
             LayoutPages();
         };
@@ -131,12 +132,26 @@ public sealed class ExpandedFrame : Grid
         _footer.Children.Add(_footerInner);
         _content.Children.Add(_footer);
         // The footer keeps a constant distance from the notch's bottom edge as the height changes
-        // between the music page and the taller pages (compositor transform only).
-        var shift = Anim.Expr(notch.Compositor, $"Vector3(0, Clamp(N.H - {Anim.F(Theme.ExpandedHeight)}, {Anim.F(Theme.MusicExpandedHeight - Theme.ExpandedHeight)}, 0), 0)", ("N", notch));
+        // between the music page, the taller pages and the media player's lyrics layout (compositor transform only).
+        var shift = Anim.Expr(notch.Compositor, $"Vector3(0, Clamp(N.H - {Anim.F(Theme.ExpandedHeight)}, {Anim.F(Theme.MusicExpandedHeight - Theme.ExpandedHeight)}, {Anim.F(Theme.LyricsExpandedHeight - Theme.ExpandedHeight)}), 0)", ("N", notch));
         Anim.VisualOf(_footer, translation: true).StartAnimation("Translation", shift);
 
-        Music = new MusicPage(vm.Music, vm.SpotifyLike);
+        Music = new MusicPage(vm.Music, vm.SpotifyLike, vm.Lyrics, notch.Compositor);
         _pageViews[PageId.Music] = Music;
+        // The glow places its main blob and shockwaves behind the art and its scrim behind the text column (and, in the
+        // lyrics layout, its vocal ribbon behind the current line); while the layout morphs, it glides along.
+        Music.ArtElement.SizeChanged += (_, _) => UpdateGlowLayout();
+        Music.DetailsElement.SizeChanged += (_, _) => UpdateGlowLayout();
+        Music.SizeChanged += (_, _) => UpdateGlowLayout();
+        Music.LyricsView.SizeChanged += (_, _) => UpdateGlowLayout();
+        Music.LayoutChanged += animate =>
+        {
+            if (animate) _glowGlideUntil = Environment.TickCount64 + 750;
+            Glow.SetLyricsLayout(Music.IsLyricsLayout, Theme.LyricsExtraHeight, animate);
+            UpdateGlowLayout();
+            LayoutChanged?.Invoke();
+        };
+        Glow.SetLyricsLayout(Music.IsLyricsLayout, Theme.LyricsExtraHeight, animate: false);
         Shelf = new ClipboardShelfPage(vm.Clipboard, vm.Shelf);
         _pageViews[PageId.Clipboard] = Shelf;
         Usage = new UsagePage(vm.Usage);
@@ -155,11 +170,16 @@ public sealed class ExpandedFrame : Grid
         Ask = new AskPage(vm.Ask, vm.Status, notch);
         Ask.CloseRequested += () => OverlayRequested?.Invoke(NotchOverlay.None);
         _pageViews[PageId.Ask] = new Grid();
-        AddOverlayLayer(_askLayer, Ask, "AskOv", "AskIdx");
+        _n.InsertScalar("AskOv", 0);
+        _n.InsertScalar("PalOv", 0);
+        AddOverlayLayer(_askLayer, Ask, "AskOv", "AskIdx", other: "PalOv");
         Palette = new CommandPaletteView(vm.Palette, notch);
         Palette.CloseRequested += () => OverlayRequested?.Invoke(NotchOverlay.None);
         _pageViews[PageId.Palette] = new Grid();
-        AddOverlayLayer(_paletteLayer, Palette, "PalOv", "PalIdx");
+        AddOverlayLayer(_paletteLayer, Palette, "PalOv", "PalIdx", other: "AskOv");
+        // Ask / the palette as a page: their own page dots switch pages like the footer's.
+        Ask.Dots.PageClicked += i => _vm.PageIndex = i;
+        Palette.Dots.PageClicked += i => _vm.PageIndex = i;
         string Near(string idx) => $"(N.{idx} >= 0 ? 1 - Clamp(Abs(N.Page - N.{idx}), 0, 1) : 0)";
         Anim.VisualOf(_content).StartAnimation("Opacity", Anim.Expr(notch.Compositor,
             $"1 - Clamp(Max(Max(N.AskOv, N.PalOv), Max({Near("AskIdx")}, {Near("PalIdx")})), 0, 1)", ("N", notch)));
@@ -191,6 +211,13 @@ public sealed class ExpandedFrame : Grid
         badge.StartAnimation("Opacity", Anim.Expr(notch.Compositor, "Clamp(p.v, 0, 1)", ("p", badgeSet)));
         vm.Hub.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(HubViewModel.UnreadCount)) UpdateBadge(); };
         UpdateBadge();
+
+        // The music glow's debug overlay (Settings ▸ Customisation ▸ Glow debug overlay) and the art's kick bump.
+        // (Narrow, over the album art: it never covers the title or controls.)
+        var debug = new GlowDebugOverlay { Margin = new Thickness(6, Theme.ExpandedPadding.Top + Theme.HeaderHeight + 6, 0, 0), MaxWidth = 172 };
+        Children.Add(debug);
+        Glow.DebugOverlay = debug;
+        Music.BindArtBump(Glow.Props);
 
         // Preview layer on top of everything in the open notch.
         var previewLayer = new Canvas { IsHitTestVisible = false };
@@ -260,19 +287,21 @@ public sealed class ExpandedFrame : Grid
         }
     }
 
-    private void AddOverlayLayer(Grid layer, FrameworkElement view, string key, string idx)
+    /// <param name="other">The other overlay's spring: while it slides in over this layer (e.g. the palette opened
+    /// on the Ask page), this one fades out underneath so the two never show at once.</param>
+    private void AddOverlayLayer(Grid layer, FrameworkElement view, string key, string idx, string other)
     {
         layer.Width = Theme.ExpandedWidth;
         layer.Height = Theme.ExpandedMaxHeight;
         layer.VerticalAlignment = VerticalAlignment.Top;
         layer.Children.Add(view);
         Children.Add(layer);
-        _n.InsertScalar(key, 0);
         _n.InsertScalar(idx, -100);
         var v = Anim.VisualOf(layer, translation: true);
         v.StartAnimation("Translation", Anim.Expr(_n.Compositor,
             $"Vector3(N.{idx} >= 0 ? (N.{idx} - N.Page) * N.Slot : (1 - Clamp(N.{key}, 0, 1)) * {Anim.F(Motion.HeaderPopupSlide)}, 0, 0)", ("N", _n)));
-        v.StartAnimation("Opacity", Anim.Expr(_n.Compositor, $"N.{idx} >= 0 ? 1 : Clamp(N.{key} * 1.3, 0, 1)", ("N", _n)));
+        v.StartAnimation("Opacity", Anim.Expr(_n.Compositor,
+            $"(N.{idx} >= 0 ? 1 : Clamp(N.{key} * 1.3, 0, 1)) * (1 - Clamp(N.{other} * 1.6, 0, 1))", ("N", _n)));
     }
 
     /// <summary>
@@ -356,8 +385,39 @@ public sealed class ExpandedFrame : Grid
             : Theme.ExpandedContentHeight - Theme.HeaderHeight - Theme.S2 - Theme.FooterHeight;
         foreach (var page in _strip.Children.OfType<FrameworkElement>()) { page.Width = w; page.Height = h; page.VerticalAlignment = VerticalAlignment.Top; }
         // The music page is shorter: its content centres in the space above the raised footer.
-        if (_vm.Pages.IsEnabled(PageId.Music)) Music.Height = Math.Max(0, h - (Theme.ExpandedHeight - Theme.MusicExpandedHeight));
+        if (_vm.Pages.IsEnabled(PageId.Music)) Music.BaseHeight = Math.Max(0, h - (Theme.ExpandedHeight - Theme.MusicExpandedHeight));
     }
+
+    /// <summary>
+    /// The music page's art and text column in glow-host DIPs, at the page's resting spot (measured inside the page,
+    /// then offset by the viewport: the pager's slide is a compositor transform, so it isn't part of layout).
+    /// </summary>
+    private void UpdateGlowLayout()
+    {
+        if (Music.XamlRoot == null || _viewport.XamlRoot == null) return;
+        try
+        {
+            var origin = _viewport.TransformToVisual(_glowHost).TransformPoint(new Windows.Foundation.Point(0, 0));
+            Windows.Foundation.Rect Rect(FrameworkElement el)
+            {
+                var p = el.TransformToVisual(Music).TransformPoint(new Windows.Foundation.Point(0, 0));
+                return new Windows.Foundation.Rect(origin.X + p.X, origin.Y + p.Y, el.ActualWidth, el.ActualHeight);
+            }
+            Windows.Foundation.Rect? lyrics = null, focus = null;
+            if (Music.IsLyricsLayout)
+            {
+                lyrics = Rect(Music.LyricsView);
+                if (Music.LyricsFocus is { } f) focus = new Windows.Foundation.Rect(origin.X + f.X, origin.Y + f.Y, f.Width, f.Height);
+            }
+            Glow.SetLayout(Rect(Music.ArtElement), Rect(Music.DetailsElement), lyrics, focus, animate: Environment.TickCount64 < _glowGlideUntil);
+        }
+        catch { /* not in the tree yet */ }
+    }
+
+    private long _glowGlideUntil;
+
+    /// <summary>The media player's layout changed (lyrics opened / closed): the window re-sizes the notch.</summary>
+    public event Action? LayoutChanged;
 
     private void OnStatusChanged(object? sender, PropertyChangedEventArgs e)
     {

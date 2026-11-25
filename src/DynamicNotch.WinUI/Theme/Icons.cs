@@ -18,6 +18,10 @@ public static class Icons
     public const string Prev = "M19 20 L9 12 L19 4 Z M5 19 V5";
     public const string Next = "M5 4 L15 12 L5 20 Z M19 5 V19";
     public const string Music = "M9 18 V5 l12 -2 v13 M9 18 a3 3 0 1 1 -6 0 a3 3 0 1 1 6 0 z M21 16 a3 3 0 1 1 -6 0 a3 3 0 1 1 6 0 z";
+    /// <summary>Lyrics (Lucide message-square-quote): the media player's lyrics button.</summary>
+    public const string Lyrics = "M21 15 a2 2 0 0 1 -2 2 H7 l-4 4 V5 a2 2 0 0 1 2 -2 h14 a2 2 0 0 1 2 2 z M8 12 a2 2 0 0 0 2 -2 V8 H8 M14 12 a2 2 0 0 0 2 -2 V8 h-2";
+    /// <summary>Quotation marks (Lucide quote): the "no lyrics" state.</summary>
+    public const string Quote = "M16 3 a2 2 0 0 0 -2 2 v6 a2 2 0 0 0 2 2 a1 1 0 0 1 1 1 v1 a2 2 0 0 1 -2 2 a1 1 0 0 0 -1 1 v2 a1 1 0 0 0 1 1 a6 6 0 0 0 6 -6 V5 a2 2 0 0 0 -2 -2 z M5 3 a2 2 0 0 0 -2 2 v6 a2 2 0 0 0 2 2 a1 1 0 0 1 1 1 v1 a2 2 0 0 1 -2 2 a1 1 0 0 0 -1 1 v2 a1 1 0 0 0 1 1 a6 6 0 0 0 6 -6 V5 a2 2 0 0 0 -2 -2 z";
 
     // Status / pills
     public const string Headphone = "M3 14 h3 a2 2 0 0 1 2 2 v3 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 v-7 a9 9 0 0 1 18 0 v7 a2 2 0 0 1 -2 2 h-1 a2 2 0 0 1 -2 -2 v-3 a2 2 0 0 1 2 -2 h3";

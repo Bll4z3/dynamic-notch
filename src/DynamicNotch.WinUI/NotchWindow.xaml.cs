@@ -52,6 +52,7 @@ public sealed partial class NotchWindow : Window
     private NotchState _state = NotchState.Collapsed;
     private bool _hover, _mouseOver, _hoverPill, _pinned, _expandedRevealed;
     private double _morphFullHeight = Theme.ExpandedHeight;
+    private bool _fullAppliedOpen; // the last ApplyTargets ran in the Expanded state
 
     private readonly DispatcherQueueTimer _expandTimer, _collapseTimer, _revealTimer, _regionTimer, _hoverWatch;
 
@@ -84,6 +85,7 @@ public sealed partial class NotchWindow : Window
         SetUpWindow();
         ApplyThemeLayout();
         BuildComposition();
+        Vm.Lyrics.Attach(_shape.Compositor); // the lyrics clock lives on this window's compositor
         _shadowWindow = new Views.NotchShadowWindow(_shape.Shadow, Anim.VisualOf(Root), Theme.HostWidth, Theme.HostHeight);
         BuildExpanded();
         BuildClipboard();
@@ -93,6 +95,7 @@ public sealed partial class NotchWindow : Window
         BuildHub();
         BuildScreenshots();
         BuildOverlays();
+        BuildLyrics();
         UpdateGlowColor(animate: false);
         // Any click on the notch pins it, including clicks that a button inside it handles.
         NotchRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Notch_PointerPressed), handledEventsToo: true);
@@ -179,6 +182,8 @@ public sealed partial class NotchWindow : Window
         _messages = null;
         _shadowWindow?.Close();
         _shadowWindow = null;
+        _reactor?.Dispose(); // releases the audio capture
+        _reactor = null;
         Close();
     }
 
@@ -286,9 +291,10 @@ public sealed partial class NotchWindow : Window
         // All content is clipped to the live body shape, so nothing ever overflows the morph.
         Anim.VisualOf(ContentRoot).Clip = _shape.CreateBodyClip();
 
-        // Collapsed layer: fades with its spring; the side groups hug the body edges (transform only).
+        // Collapsed layer: fades with its spring (and gives way to the lyric line); the side groups hug the body edges.
         float cpw = (float)Theme.CollapsedPlayingWidth;
-        Anim.VisualOf(CollapsedLayer).StartAnimation("Opacity", Anim.Expr(c, "Clamp(N.Collapsed, 0, 1)", ("N", n)));
+        _lyricShow = new CompSpring(n, "Lyric", Motion.LyricSwap, 0);
+        Anim.VisualOf(CollapsedLayer).StartAnimation("Opacity", Anim.Expr(c, "Clamp(N.Collapsed, 0, 1) * (1 - Clamp(N.Lyric, 0, 1))", ("N", n)));
         var right = Anim.Expr(c, "Vector3((N.W - CPW) / 2, 0, 0)", ("N", n));
         right.SetScalarParameter("CPW", cpw);
         Anim.VisualOf(CollapsedRight, translation: true).StartAnimation("Translation", right);
@@ -353,7 +359,7 @@ public sealed partial class NotchWindow : Window
         Vm.HoldPill(next is NotchState.Expanded or NotchState.Activity || _hint);
         if (next == NotchState.Expanded && Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
         // An activity pill that ended under the pointer: carry on as a normal hover (open after the usual delay).
-        if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; Restart(_expandTimer, HoverDelayMs); }
+        if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; if (!ClickToOpen) Restart(_expandTimer, HoverDelayMs); }
         if (prev == NotchState.Expanded && next != NotchState.Expanded)
         {
             Unpin();
@@ -373,16 +379,24 @@ public sealed partial class NotchWindow : Window
     /// <summary>Expanded size for the current page: Ask sizes itself to its state and content.</summary>
     private (double Width, double Height) ExpandedTarget() => Vm.IsAskPage ? _frame.Ask.DesiredNotchSize
         : Vm.IsPaletteOpen ? _frame.Palette.DesiredNotchSize
-        : (Theme.ExpandedWidth, Vm.IsMusicPage && !_frame.Popup.IsOpen ? Theme.MusicExpandedHeight : Theme.ExpandedHeight);
+        : (Theme.ExpandedWidth, Vm.IsMusicPage && !_frame.Popup.IsOpen ? (_frame.Music.IsLyricsLayout ? Theme.LyricsExpandedHeight : Theme.MusicExpandedHeight) : Theme.ExpandedHeight);
 
     private void ApplyTargets(bool immediate = false)
     {
         bool minimal = Vm.MinimalNotch;
         bool playing = Vm.Music.IsPlaying;
         bool timer = CompactTimerShown; // the focus timer takes the collapsed right side over the music bits
+        double? lyricWidth = ApplyCollapsedLyric();
 
         var expanded = ExpandedTarget();
-        _morphFullHeight = expanded.Height;
+        // "Full" is the height the closed → open morph measures its progress against (the header clock / ring
+        // flights and the glow ride it). Once the notch is open, a resize between pages (music ⇄ taller pages,
+        // Ask / palette content) is not part of that morph: growing must not raise "Full" ahead of the height,
+        // or the progress dips below 1 and the clock slides toward its collapsed spot mid-transition.
+        _morphFullHeight = _state == NotchState.Expanded && _fullAppliedOpen
+            ? Math.Min(expanded.Height, _morphFullHeight)
+            : expanded.Height;
+        _fullAppliedOpen = _state == NotchState.Expanded;
         _shape.Props.InsertScalar("Full", (float)_morphFullHeight);
 
         double w, h;
@@ -391,7 +405,8 @@ public sealed partial class NotchWindow : Window
         {
             case NotchState.Expanded:
                 (w, h) = expanded;
-                if ((Vm.IsAskPage || Vm.IsPaletteOpen) && _expandedRevealed) preset = Motion.AskResize;
+                if (Vm.IsPaletteOpen && _expandedRevealed) preset = Motion.PaletteResize;
+                else if (Vm.IsAskPage && _expandedRevealed) preset = Motion.AskResize;
                 break;
             case NotchState.Pill:
                 w = Theme.PillWidth; h = Theme.PillHeight; preset = Motion.Pop; // pop with a little overshoot
@@ -402,6 +417,9 @@ public sealed partial class NotchWindow : Window
             default:
                 w = minimal ? Theme.MinimalWidth : playing || timer ? Theme.CollapsedPlayingWidth : Theme.CollapsedWidth;
                 h = minimal ? Theme.MinimalHeight : Theme.CollapsedHeight;
+                if (lyricWidth is { } lw) w = lw; // the line being sung: the notch fits it
+                // Click to open: hovering swells the closed notch a touch, so it reads as clickable.
+                if (ClickToOpen && _mouseOver) { w += Theme.ClickHoverGrowWidth; h += Theme.ClickHoverGrowHeight; }
                 break;
         }
 
@@ -436,7 +454,7 @@ public sealed partial class NotchWindow : Window
         UpdateCompactActivity();
         _frame.SetSurfaces(_state == NotchState.Expanded && Vm.IsAskPage, _state == NotchState.Expanded && Vm.IsPaletteOpen);
 
-        Bars.IsPlaying = _state == NotchState.Collapsed && playing && !minimal && !timer;
+        Bars.IsPlaying = _state == NotchState.Collapsed && playing && !minimal && !timer && lyricWidth == null;
         _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage, Vm.Music.IsPlaying);
         Vm.Music.IsVisible = _state == NotchState.Expanded && Vm.IsMusicPage;
         Vm.Usage.IsVisible = _state == NotchState.Expanded && Vm.CurrentPage == PageId.Usage;
@@ -655,6 +673,7 @@ public sealed partial class NotchWindow : Window
             return;
         }
         if (OnActivityPointerEntered()) return; // hovering an activity pill holds it instead of opening the notch
+        if (ClickToOpen) { if (_state == NotchState.Collapsed) ApplyTargets(); return; } // click to open: just the hover lift
         if (!_hover) Restart(_expandTimer, HoverDelayMs);
     }
 
@@ -680,6 +699,7 @@ public sealed partial class NotchWindow : Window
             Vm.HoldPill(false);
         }
         OnActivityPointerLeft();
+        if (ClickToOpen && _state == NotchState.Collapsed) ApplyTargets(); // drop the hover lift
         ScheduleCollapseCheck();
     }
 
@@ -707,6 +727,16 @@ public sealed partial class NotchWindow : Window
     private void Notch_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         if (_state is NotchState.Pill or NotchState.Activity) return; // pills handle their own click (dismiss)
+        if (ClickToOpen && _state != NotchState.Expanded)
+        {
+            // Click to open: the click opens it exactly as a hover would (not pinned), so moving away, clicking
+            // outside or Esc close it as usual. Later clicks inside the open notch pin it, as they always have.
+            _expandTimer.Stop();
+            _collapseTimer.Stop();
+            _hover = true;
+            UpdateState();
+            return;
+        }
         if (!_pinned) Pin();
     }
 
@@ -723,13 +753,7 @@ public sealed partial class NotchWindow : Window
     {
         _pinned = true;
         _hover = true;
-        if (_keys != null)
-        {
-            double h = Math.Max(Theme.ExpandedHeight, _morphFullHeight);
-            double half = Theme.ExpandedWidth / 2 + Theme.CornerRadius;
-            int cx = _winLeft + (int)Math.Round(Theme.HostWidth * _scale / 2);
-            _keys.SetPinned(true, cx - (int)(half * _scale), _winTop, cx + (int)(half * _scale), _winTop + (int)(h * _scale));
-        }
+        UpdatePinnedRect();
         UpdateState();
     }
 

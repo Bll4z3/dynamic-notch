@@ -65,13 +65,6 @@ internal static class Native
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-    /// <summary>Starts a system resize from the bottom-right corner (the Settings window's grip).</summary>
-    public static void BeginWindowResize(IntPtr hwnd)
-    {
-        ReleaseCapture();
-        SendMessage(hwnd, 0x00A1 /* WM_NCLBUTTONDOWN */, new IntPtr(17) /* HTBOTTOMRIGHT */, IntPtr.Zero);
-    }
-
     // ---- Keeping the app's own windows out of screenshots ---------------------------------------------
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint affinity);
     [DllImport("dwmapi.dll")] private static extern int DwmFlush();

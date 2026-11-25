@@ -21,7 +21,16 @@ namespace DynamicNotch.Views;
 /// </summary>
 internal sealed class GeneralTabView : Grid
 {
-    public GeneralTabView(GeneralTabViewModel vm)
+    private readonly ApiKeyTabView _apiKey;
+
+    /// <summary>Scrolls to the Claude API key section and focuses its box (Ask's "Open Settings").</summary>
+    public void FocusApiKey()
+    {
+        _apiKey.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true, VerticalAlignmentRatio = 0.1 });
+        _apiKey.FocusBox();
+    }
+
+    public GeneralTabView(GeneralTabViewModel vm, ApiKeyTabViewModel apiKey)
     {
         var stack = new StackPanel { Margin = new Thickness(0, 0, Theme.S3, Theme.S2) };
         stack.Children.Add(SettingsUi.Title("General"));
@@ -85,6 +94,11 @@ internal sealed class GeneralTabView : Grid
         // ---- Spotify: connect your account for the media player's Like button ----
         stack.Children.Add(new TextBlock { Text = "Spotify", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
         stack.Children.Add(SettingsUi.Card(SpotifyCard(vm)));
+
+        // ---- Claude API key (was its own tab): the same box, Paste, Save / Remove / Test and status ----
+        stack.Children.Add(new TextBlock { Text = "Claude API key", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
+        _apiKey = new ApiKeyTabView(apiKey, embedded: true);
+        stack.Children.Add(SettingsUi.Card(_apiKey));
 
         stack.Children.Add(new TextBlock { Text = "Ask hotkey", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
         var hotkey = new Grid { MinHeight = 40 };

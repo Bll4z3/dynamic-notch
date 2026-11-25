@@ -122,10 +122,9 @@ internal sealed class SettingsWindow : Window
         // Tab views are built the first time each tab is shown (the Customisation tab alone is a big tree),
         // so opening Settings only builds the visible tab.
         _content = content;
-        _factories[vm.ApiKey] = () => new ApiKeyTabView(vm.ApiKey);
         _factories[vm.Layout] = () => new LayoutTabView(vm.Layout);
         _factories[vm.Focus] = () => new FocusTabView(vm.Focus);
-        _factories[vm.General] = () => new GeneralTabView(vm.General);
+        _factories[vm.General] = () => new GeneralTabView(vm.General, vm.ApiKey);
         _factories[vm.Customisation] = () => new CustomisationTabView(vm.Customisation);
         _factories[vm.Pills] = () => new PillsTabView(vm.Pills);
         _factories[vm.Updates] = () => new UpdatesTabView(vm.Updates);
@@ -143,7 +142,7 @@ internal sealed class SettingsWindow : Window
             grip.Children.Add(new Microsoft.UI.Xaml.Shapes.Line { X1 = 18 - off - len, Y1 = 18 - off, X2 = 18 - off, Y2 = 18 - off - len, Stroke = Theme.TertiaryText, StrokeThickness = 1.2, IsHitTestVisible = false });
         grip.ProtectedCursorSet(Microsoft.UI.Input.InputSystemCursorShape.SizeNorthwestSoutheast);
         ToolTipService.SetToolTip(grip, "Resize");
-        grip.PointerPressed += (_, e) => { Native.BeginWindowResize(_hwnd); e.Handled = true; };
+        HookResizeGrip(grip);
         _card.Children.Add(grip);
         AppWindow.Changed += (_, a) =>
         {
@@ -231,6 +230,49 @@ internal sealed class SettingsWindow : Window
             _instance = null;
             HandleChanged?.Invoke(IntPtr.Zero);
         };
+    }
+
+    /// <summary>
+    /// The grip resizes with pointer capture: it starts on press, follows the cursor while the button is held and
+    /// stops on release, including a release outside the window (capture delivers it) or a lost capture. (It used
+    /// to start a system resize loop from inside this XAML press handler; XAML had already consumed the button-down,
+    /// so the loop never saw the button-up and the window stayed stuck to the mouse until the next click.)
+    /// </summary>
+    private void HookResizeGrip(UIElement grip)
+    {
+        bool resizing = false;
+        Native.POINT start = default;
+        SizeInt32 startSize = default;
+        void Stop(Microsoft.UI.Xaml.Input.Pointer? p)
+        {
+            if (!resizing) return;
+            resizing = false;
+            if (p != null) grip.ReleasePointerCapture(p);
+        }
+        grip.PointerPressed += (_, e) =>
+        {
+            e.Handled = true;
+            if (!e.GetCurrentPoint(grip).Properties.IsLeftButtonPressed || !Native.GetCursorPos(out start)) return;
+            if (!grip.CapturePointer(e.Pointer)) return;
+            startSize = AppWindow.Size;
+            resizing = true;
+        };
+        grip.PointerMoved += (_, e) =>
+        {
+            if (!resizing) return;
+            e.Handled = true;
+            // A release we somehow missed: never keep following a mouse whose button is up.
+            if (!e.GetCurrentPoint(grip).Properties.IsLeftButtonPressed) { Stop(e.Pointer); return; }
+            if (!Native.GetCursorPos(out var now)) return;
+            double scale = Native.GetPrimaryMonitor().scale;
+            int minW = (int)Math.Round((Theme.SettingsMinWidth + 2 * Theme.SettingsShadowRoom) * scale);
+            int minH = (int)Math.Round((Theme.SettingsMinHeight + 2 * Theme.SettingsShadowRoom) * scale);
+            var size = new SizeInt32(Math.Max(minW, startSize.Width + now.X - start.X), Math.Max(minH, startSize.Height + now.Y - start.Y));
+            if (size.Width != AppWindow.Size.Width || size.Height != AppWindow.Size.Height) AppWindow.Resize(size);
+        };
+        grip.PointerReleased += (_, e) => { if (resizing) e.Handled = true; Stop(e.Pointer); };
+        grip.PointerCaptureLost += (_, _) => resizing = false;
+        grip.PointerCanceled += (_, e) => Stop(e.Pointer);
     }
 
     private void OnRadiusChanged() => BuildShadow(Anim.VisualOf(_card).Compositor); // the shadow's corners follow the radius
@@ -333,6 +375,7 @@ internal sealed class SettingsWindow : Window
             }
             existing.Activate();
             Native.SetForegroundWindow(existing._hwnd);
+            if (vm.ApiKeyFocusPending) existing.FocusFirst(); // already open: still jump to the key box
             PerfLog.Mark("shown (reused window)");
             return;
         }
@@ -356,7 +399,11 @@ internal sealed class SettingsWindow : Window
     private void FocusFirst() =>
         DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
         {
-            if (_views.GetValueOrDefault(_vm.SelectedTab.Content) is ApiKeyTabView key) key.FocusBox();
+            if (_vm.ApiKeyFocusPending && _views.GetValueOrDefault(_vm.SelectedTab.Content) is GeneralTabView general)
+            {
+                _vm.ApiKeyFocusPending = false;
+                general.FocusApiKey();
+            }
             else _root.Focus(FocusState.Programmatic);
         });
 
@@ -516,7 +563,10 @@ internal sealed class SettingsWindow : Window
     private sealed class RootControl : UserControl { }
 }
 
-/// <summary>"Claude API key" tab: masked key box with show / hide and Paste, Save / Remove / Test, status.</summary>
+/// <summary>
+/// The Claude API key settings (a section of Settings ▸ General): masked key box with show / hide and Paste,
+/// Save / Remove / Test, status.
+/// </summary>
 internal sealed class ApiKeyTabView : StackPanel
 {
     private readonly ApiKeyTabViewModel _vm;
@@ -527,11 +577,12 @@ internal sealed class ApiKeyTabView : StackPanel
     private readonly TextBlock _status = new(), _test = new();
     private readonly CompSpring _checkSpring;
 
-    public ApiKeyTabView(ApiKeyTabViewModel vm)
+    /// <param name="embedded">Inside another page (General): its section heading names it, so no page title here.</param>
+    public ApiKeyTabView(ApiKeyTabViewModel vm, bool embedded = false)
     {
         _vm = vm;
-        Children.Add(new TextBlock { Text = "Claude API key", Style = AskPage.TextStyle("TitleText") });
-        Children.Add(new TextBlock { Text = "Paste your API key to turn on Ask Claude.", Style = AskPage.TextStyle("SecondaryText"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1 });
+        if (!embedded) Children.Add(new TextBlock { Text = "Claude API key", Style = AskPage.TextStyle("TitleText") });
+        Children.Add(new TextBlock { Text = "Paste your API key to turn on Ask Claude.", Style = AskPage.TextStyle("SecondaryText"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = embedded ? new Thickness(0) : Theme.GapTopS1 });
         var linkText = new TextBlock { FontFamily = Theme.Font, FontSize = Theme.FontBody, Margin = Theme.GapTopS1 };
         var link = new Hyperlink { Foreground = Theme.AccentBrush, UnderlineStyle = UnderlineStyle.None };
         link.Inlines.Add(new Run { Text = AppConfig.ApiKeyPageLabel });

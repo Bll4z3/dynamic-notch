@@ -25,6 +25,9 @@ public sealed record MediaSnapshot(
 
     public bool HasMedia => !string.IsNullOrEmpty(Title) || SessionCount > 0;
 
+    /// <summary>The album title, when the player reports one (lyrics matching).</summary>
+    public string Album { get; init; } = "";
+
     /// <summary>Position extrapolated to "now" while playing (the OS only reports it sporadically).</summary>
     public TimeSpan PositionNow
     {
@@ -101,17 +104,26 @@ public sealed class MediaService : IDisposable
     public async void Next() { try { if (_session != null) await _session.TrySkipNextAsync(); } catch { } }
     public async void Previous() { try { if (_session != null) await _session.TrySkipPreviousAsync(); } catch { } }
 
-    public async void Seek(TimeSpan position)
+    public async void Seek(TimeSpan position) => await SeekAsync(position);
+
+    /// <summary>
+    /// Asks the player to jump to <paramref name="position"/>. True when the player accepted (it then reports the new
+    /// position itself; the snapshot is updated optimistically meanwhile so nothing snaps back).
+    /// </summary>
+    public async Task<bool> SeekAsync(TimeSpan position)
     {
         try
         {
-            if (_session == null) return;
-            await _session.TryChangePlaybackPositionAsync(position.Ticks);
-            // Optimistically update so the bar doesn't snap back while the player catches up.
+            if (_session == null) return false;
+            // The timeline's start isn't always zero: positions are relative to it.
+            var start = _session.GetTimelineProperties().StartTime;
+            bool ok = await _session.TryChangePlaybackPositionAsync((position + start).Ticks);
+            if (!ok) return false;
             Snapshot = Snapshot with { Position = position, PositionSampledAt = DateTimeOffset.Now };
             Changed?.Invoke(Snapshot);
+            return true;
         }
-        catch { }
+        catch { return false; }
     }
 
     /// <summary>Switch to the next active player (when several are running).</summary>
@@ -188,7 +200,7 @@ public sealed class MediaService : IDisposable
                 controls.IsPlayPauseToggleEnabled || controls.IsPlayEnabled || controls.IsPauseEnabled,
                 controls.IsPlaybackPositionEnabled && duration > TimeSpan.Zero,
                 FriendlyAppName(_session.SourceAppUserModelId),
-                count));
+                count) { Album = props?.AlbumTitle ?? "" });
         }
         catch (Exception ex)
         {

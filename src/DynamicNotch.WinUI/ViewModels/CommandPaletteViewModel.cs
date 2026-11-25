@@ -128,7 +128,7 @@ public sealed class CommandPaletteViewModel : ObservableObject
             }, cts.Token);
         }
         catch (OperationCanceledException) { }
-        catch (ClaudeException ex) { AskText = ex.Kind == ClaudeErrorKind.NoKey ? "Add your Claude API key in Settings ▸ Claude API key to ask from here." : ex.Message; }
+        catch (ClaudeException ex) { AskText = ex.Kind == ClaudeErrorKind.NoKey ? "Add your Claude API key in Settings ▸ General ▸ Claude API key to ask from here." : ex.Message; }
         catch (Exception ex) { AskText = $"Couldn't reach Claude: {ex.Message}"; }
         finally
         {
@@ -161,6 +161,16 @@ public sealed class CommandPaletteViewModel : ObservableObject
 
     public bool Enabled(string function) => !_settings.Current.Palette.Disabled.Contains(function);
 
+    /// <summary>Settings ▸ Command Palette ▸ Glow intensity (1 = default).</summary>
+    public double GlowIntensity => Math.Clamp(_settings.Current.Palette.GlowIntensity, 0, 2);
+
+    /// <summary>Raised when any setting changes (the view re-reads <see cref="GlowIntensity"/>).</summary>
+    public event Action? SettingsChanged
+    {
+        add => _settings.Changed += value;
+        remove => _settings.Changed -= value;
+    }
+
     // ---- Query → results ---------------------------------------------------------------------------------------
     /// <summary>
     /// Every keystroke: the instant providers run on a worker (never the UI thread, so typing never waits on a
@@ -174,12 +184,24 @@ public sealed class CommandPaletteViewModel : ObservableObject
         _slow.Stop();
         string q = _query.Trim();
         var snap = TakeSnap();
+        SlowPending = NeedsSlow(q, snap);
         _ = Task.Run(() => Instant(q, snap)).ContinueWith(t =>
         {
             if (t.IsCompletedSuccessfully) _ui.TryEnqueue(DispatcherQueuePriority.High, () => { if (version == _version) Publish(t.Result); });
             else if (t.Exception is { } ex) App.LogError(ex);
         }, TaskScheduler.Default);
-        if (NeedsSlow(q, snap)) _slow.Start();
+        if (SlowPending) _slow.Start();
+    }
+
+    /// <summary>True while slower results (files, definitions, rates) for the current query may still be added.</summary>
+    public bool SlowPending { get; private set; }
+
+    /// <summary>The slow search for <paramref name="version"/> is over: the results are final (the view may shrink now).</summary>
+    private void SlowDone(int version, bool published)
+    {
+        if (version != _version || !SlowPending) return;
+        SlowPending = false;
+        if (!published) ResultsChanged?.Invoke();
     }
 
     private void Publish(List<PaletteResult> list)
@@ -203,7 +225,7 @@ public sealed class CommandPaletteViewModel : ObservableObject
             {
                 await _rates.RefreshIfStaleAsync();
                 var again = await Task.Run(() => Instant(q, snap));
-                if (version == _version) Publish(again); // rates arrived: the conversion can show now
+                if (version == _version) { SlowPending = false; Publish(again); } // rates arrived: the conversion can show now
                 return;
             }
             if (snap.Enabled("define") && q.StartsWith("define ", StringComparison.OrdinalIgnoreCase))
@@ -226,9 +248,10 @@ public sealed class CommandPaletteViewModel : ObservableObject
         }
         catch (OperationCanceledException) { return; }
         catch { }
-        if (version != _version || cts.IsCancellationRequested || extra.Count == 0) return;
+        if (version != _version || cts.IsCancellationRequested) return;
+        if (extra.Count == 0) { SlowDone(version, published: false); return; }
         var merged = await Task.Run(() => Instant(q, snap).Concat(extra).ToList());
-        if (version == _version) Publish(merged);
+        if (version == _version) { SlowPending = false; Publish(merged); }
     }
 
     /// <summary>Everything that can answer right away.</summary>

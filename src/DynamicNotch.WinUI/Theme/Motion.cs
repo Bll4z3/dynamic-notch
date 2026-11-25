@@ -134,6 +134,8 @@ public static class Motion
     public static readonly SpringPreset GlowCrossfade = SpringPreset.FromResponse(0.6, 1.0);
     /// <summary>Dimming when paused / brightening when playing.</summary>
     public static readonly SpringPreset GlowDim = SpringPreset.FromResponse(0.55, 1.0);
+    /// <summary>The music glow easing between its static look and the music-reactive one (music starts / pauses / goes quiet).</summary>
+    public static readonly SpringPreset GlowReact = SpringPreset.FromResponse(0.7, 1.0);
 
     // ---- Clipboard preview card --------------------------------------------------------------
     /// <summary>The card springing out of the tile.</summary>
@@ -247,6 +249,20 @@ public static class Motion
     public static readonly SpringPreset HeartFill = SpringPreset.FromResponse(0.34, 0.72);
     public static readonly SpringPreset HeartPop = SpringPreset.FromResponse(0.42, 0.42);
 
+    // ---- Lyrics ----
+    /// <summary>The media player morphing between its normal layout and the lyrics layout (and the notch growing for it).</summary>
+    public static readonly SpringPreset LyricsMorph = SpringPreset.FromResponse(0.52, 0.86);
+    /// <summary>Lines scrolling to the current one (lower lines follow a beat later, see LyricsPanel.ScrollStagger).</summary>
+    public static readonly SpringPreset LyricScroll = SpringPreset.FromResponse(0.62, 0.9);
+    /// <summary>Manual scrolling (the mouse wheel): quicker, so the lines keep up with the wheel.</summary>
+    public static readonly SpringPreset LyricWheel = SpringPreset.FromResponse(0.3, 1.0);
+    /// <summary>A line growing / brightening as it becomes current, dimming and shrinking as it passes.</summary>
+    public static readonly SpringPreset LyricLine = SpringPreset.FromResponse(0.46, 0.86);
+    /// <summary>The closed notch's line swapping (old one lifts away, new one rises in, blur to sharp).</summary>
+    public static readonly SpringPreset LyricSwap = SpringPreset.FromResponse(0.4, 0.92);
+    /// <summary>Auto-follow resumes this long after the last manual scroll (ms).</summary>
+    public const int LyricFollowResumeMs = 4000;
+
     // ---- Command palette ----
     /// <summary>The selection highlight gliding between rows, rows fading / sliding in one after another (seconds apart).</summary>
     public static readonly SpringPreset PaletteHighlight = SpringPreset.FromResponse(0.22, 0.86);
@@ -254,8 +270,11 @@ public static class Motion
     public const double PaletteRowStagger = 0.018;
     /// <summary>How long the "Copied" check / a launched app's icon pop show before the palette closes (ms).</summary>
     public const int PaletteCopiedMs = 420, PaletteLaunchMs = 170;
-    /// <summary>The palette shrinks only after typing pauses this long (it grows at once), so the notch doesn't bounce per key.</summary>
-    public const int PaletteShrinkDelayMs = 260;
+    /// <summary>Longest the palette waits for the slow results (files) of the same query before shrinking (ms). With no
+    /// slow search running it resizes at once.</summary>
+    public const int PaletteShrinkDelayMs = 150;
+    /// <summary>The notch following the palette's content as results change: quick and critically damped (no overshoot).</summary>
+    public static readonly SpringPreset PaletteResize = SpringPreset.FromResponse(0.28, 1.0);
     /// <summary>The palette's bottom glow settling back after a reaction.</summary>
     public static readonly SpringPreset PaletteGlow = SpringPreset.FromResponse(0.45, 0.85);
 

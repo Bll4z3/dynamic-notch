@@ -62,9 +62,10 @@ public sealed class CommandPaletteView : UserControl
         foreach (var h in new[] { GridLength.Auto, GridLength.Auto, GridLength.Auto, GridLength.Auto, GridLength.Auto })
             _root.RowDefinitions.Add(new RowDefinition { Height = h });
         _container.Children.Add(_root);
-        // The glow sits on the palette's (= the notch's) bottom edge; the notch shape clips its lower half.
+        // The glow sits on the palette's (= the notch's) top edge; the notch shape clips its upper half, so it
+        // shines down behind the search bar.
         _glowHost.Height = 1;
-        _glowHost.VerticalAlignment = VerticalAlignment.Bottom;
+        _glowHost.VerticalAlignment = VerticalAlignment.Top;
         _glowHost.IsHitTestVisible = false;
         _container.Children.Add(_glowHost);
         Content = _container;
@@ -147,7 +148,7 @@ public sealed class CommandPaletteView : UserControl
         _root.Children.Add(_askPanel);
 
         // ---- Footer: key hints (and the page dots when the palette is a page) ----
-        _footer.Text = "↑↓ select   ·   Enter open   ·   Ctrl+Enter alternate   ·   Tab ask Claude   ·   / commands";
+        _footer.Text = DefaultFooter;
         _footer.Style = (Style)Application.Current.Resources["CaptionText"];
         _footer.Foreground = Theme.TertiaryText;
         _footer.HorizontalAlignment = HorizontalAlignment.Center;
@@ -168,12 +169,14 @@ public sealed class CommandPaletteView : UserControl
         hv.StartAnimation("Opacity", Anim.Expr(c, "Clamp(p.s, 0, 1)", ("p", p)));
         _glow = new PaletteGlow(_glowHost, c);
         _container.SizeChanged += (_, e) => _glow.Resize(e.NewSize.Width);
+        _glow.SetIntensity(vm.GlowIntensity);
+        vm.SettingsChanged += () => _glow.SetIntensity(vm.GlowIntensity); // live from Settings ▸ Command Palette
 
         _shrink = DispatcherQueue.GetForCurrentThread().CreateTimer();
         _shrink.IsRepeating = false;
         _shrink.Interval = TimeSpan.FromMilliseconds(Motion.PaletteShrinkDelayMs);
-        _shrink.Tick += (_, _) => { _shrink.Stop(); _heldHeight = MeasuredHeight; NotchSizeChanged?.Invoke(); };
-        _root.SizeChanged += (_, _) => OnContentHeightChanged();
+        _shrink.Tick += (_, _) => { _shrink.Stop(); ApplyHeight(force: true); };
+        _root.SizeChanged += (_, _) => ApplyHeight();
 
         vm.ResultsChanged += Rebuild;
         vm.AskChanged += OnAskChanged;
@@ -192,15 +195,27 @@ public sealed class CommandPaletteView : UserControl
         set { _pageMode = value; Dots.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
     }
 
+    private const string DefaultFooter = "↑↓ select   ·   Enter open   ·   Ctrl+Enter alternate   ·   Tab ask Claude   ·   / commands";
+
     private double MeasuredHeight => _root.ActualHeight + Theme.PalettePadding.Top + Theme.PalettePadding.Bottom;
 
-    /// <summary>Grow at once; shrink only after typing pauses (no bouncing notch while you type).</summary>
-    private void OnContentHeightChanged()
+    /// <summary>
+    /// The notch follows the measured content (called after layout, so the size is the new one). It grows at once and
+    /// shrinks at once too, except while the same query's slow results (files) may still arrive: then it waits for
+    /// them, at most <see cref="Motion.PaletteShrinkDelayMs"/>, so it doesn't drop and come straight back. The wait is
+    /// never restarted by later keys (that used to keep the notch tall with empty space while you typed).
+    /// </summary>
+    private void ApplyHeight(bool force = false)
     {
         double h = MeasuredHeight;
-        _shrink.Stop();
-        if (h >= _heldHeight - 0.5) { _heldHeight = h; NotchSizeChanged?.Invoke(); }
-        else _shrink.Start();
+        if (Math.Abs(h - _heldHeight) < 0.5) { _shrink.Stop(); return; }
+        if (h > _heldHeight || force || !_vm.SlowPending)
+        {
+            _shrink.Stop();
+            _heldHeight = h;
+            NotchSizeChanged?.Invoke();
+        }
+        else if (!_shrink.IsRunning) _shrink.Start();
     }
 
     /// <summary>The notch size the palette wants: its width, and as tall as the bar + results (+ answer).</summary>
@@ -270,6 +285,10 @@ public sealed class CommandPaletteView : UserControl
         _selected = keep >= 0 && keep < 3 ? keep : 0;
         _hShow.SetTarget(none || _vm.IsAskMode ? 0 : 1, Motion.FadeIn);
         Select(_selected, animate: keep >= 0);
+        // Measure after this pass's layout (not the previous one's), then resize. When the size is unchanged no
+        // SizeChanged fires, so this is also what releases a shrink held for slow results that came back empty.
+        _root.UpdateLayout();
+        ApplyHeight();
     }
 
     private void Select(int index, bool animate)
@@ -363,7 +382,7 @@ public sealed class CommandPaletteView : UserControl
         bool ask = _vm.IsAskMode;
         _askPanel.Visibility = ask ? Visibility.Visible : Visibility.Collapsed;
         _listHost.Visibility = ask ? Visibility.Collapsed : Visibility.Visible;
-        if (!ask) return;
+        if (!ask) { _footer.Text = DefaultFooter; return; } // typing again after an answer: the search hints come back
         _askQuestion.Text = _vm.AskQuestion;
         string text = _vm.AskText.Length > 0 ? _vm.AskText : _vm.IsAsking ? "Thinking…" : "";
         _askAnswer.Render(text, animate: false);
@@ -533,7 +552,7 @@ public sealed class CommandPaletteView : UserControl
 }
 
 /// <summary>
-/// The soft white glow along the bottom edge of the notch while the palette is open, reacting to input:
+/// The soft white glow along the top edge of the palette while it is open, reacting to input:
 /// a small ripple where you type, a dip and inward squeeze on Backspace, a bright sweep across on Enter, a
 /// faint shimmer when moving between results and a short flicker when nothing matches. Everything runs on
 /// the compositor (keyframes and springs on a property set), so typing never waits on it.
@@ -555,22 +574,23 @@ internal sealed class PaletteGlow
         _p.InsertScalar("SA", 0);  // sweep strength
         _p.InsertScalar("F", 1);   // flicker multiplier
         _p.InsertScalar("W", _w);
+        _p.InsertScalar("I", 1);   // intensity boost above 100% (below 100% the whole layer's opacity scales)
         _level = new CompSpring(_p, "L", Motion.PaletteGlow, 0);
         _width = new CompSpring(_p, "X", Motion.PaletteGlow, 1);
 
-        var root = c.CreateContainerVisual();
+        var root = _root = c.CreateContainerVisual();
         _base = Glow(0x5C);
         _base.StartAnimation("Size", Expr($"Vector2(P.W * 1.1, {Anim.F(GlowHeight)})"));
         _base.StartAnimation("Offset", Expr($"Vector3(-P.W * 0.05, {Anim.F(-GlowHeight / 2)}, 0)"));
         _base.StartAnimation("CenterPoint", Expr($"Vector3(P.W * 0.55, {Anim.F(GlowHeight / 2)}, 0)"));
         _base.StartAnimation("Scale", Expr($"Vector3(P.X, 0.85 + 0.15 * Clamp(P.L / {Anim.F(BaseLevel)}, 0, 1.6), 1)"));
-        _base.StartAnimation("Opacity", Expr("Clamp(P.L, 0, 1) * P.F"));
+        _base.StartAnimation("Opacity", Expr("Clamp(P.L * P.I, 0, 1) * P.F"));
         root.Children.InsertAtTop(_base);
 
         _sweep = Glow(0xC0);
         _sweep.Size = new Vector2(220, GlowHeight);
         _sweep.StartAnimation("Offset", Expr($"Vector3(-220 + P.S * (P.W + 220), {Anim.F(-GlowHeight / 2)}, 0)"));
-        _sweep.StartAnimation("Opacity", Expr("Sin(Clamp(P.S, 0, 1) * 3.14159) * P.SA * P.F * Clamp(P.L * 2, 0, 1)"));
+        _sweep.StartAnimation("Opacity", Expr("Clamp(Sin(Clamp(P.S, 0, 1) * 3.14159) * P.SA * P.I, 0, 1) * P.F * Clamp(P.L * 2, 0, 1)"));
         root.Children.InsertAtTop(_sweep);
 
         _ripple = Glow(0xA0);
@@ -601,6 +621,16 @@ internal sealed class PaletteGlow
     }
 
     public void Resize(double width) { _w = (float)Math.Max(100, width); _p.InsertScalar("W", _w); }
+
+    private readonly ContainerVisual _root;
+
+    /// <summary>0 = no glow, 1 = the original strength, up to 2 = brighter.</summary>
+    public void SetIntensity(double intensity)
+    {
+        intensity = Math.Clamp(intensity, 0, 2);
+        _root.Opacity = (float)Math.Min(1, intensity);
+        _p.InsertScalar("I", (float)Math.Max(1, intensity));
+    }
 
     public void Show(bool on) => _level.SetTarget(on ? BaseLevel : 0, Motion.PaletteGlow);
 

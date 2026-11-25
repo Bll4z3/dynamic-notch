@@ -138,6 +138,8 @@ public static class Theme
     public const double TimeColumnWidth = 48;
     public static readonly GridLength TimeColumn = new(TimeColumnWidth);
     public const double TransportButtonSize = 40, PlayButtonSize = 52;
+    /// <summary>The lyrics layout: how much taller the notch grows, the album art's size and the left column's width.</summary>
+    public const double LyricsExtraHeight = 76, LyricsArtSize = 104, LyricsColumnWidth = 236;
     public static readonly Thickness TransportGap = new(S2, 0, S2, 0);
     public const double AccentMinLightness = 0.58, AccentMinSaturation = 0.35, AccentGlowOpacity = 0.32;
 
@@ -159,6 +161,8 @@ public static class Theme
     public const double ExpandedWidth = 680, ExpandedHeight = 312;
     /// <summary>The music page is a little shorter than the clipboard page (snug under the controls).</summary>
     public const double MusicExpandedHeight = ExpandedHeight - 14;
+    /// <summary>The media player with lyrics open (album art and controls in a column, lyrics beside them).</summary>
+    public const double LyricsExpandedHeight = MusicExpandedHeight + LyricsExtraHeight;
     public const double PillWidth = 400, PillHeight = 72, PillIconSize = 42;
     public const double HeaderHeight = 26, FooterHeight = 30;
     public static readonly GridLength HeaderRow = new(HeaderHeight), FooterRow = new(FooterHeight);
@@ -168,6 +172,8 @@ public static class Theme
     public const double HostWidth = ExpandedWidth + 2 * MaxCornerRadius + 2 * ShadowRoom, HostHeight = ExpandedMaxHeight + ShadowRoom;
     /// <summary>Near-invisible hover strip so the minimal (6px) notch is easy to reach.</summary>
     public const double HoverStripHeight = 14, HoverStripExtra = 60;
+    /// <summary>"Click to open notch": how much the closed notch swells while hovered (DIPs), the cue that it's clickable.</summary>
+    public const double ClickHoverGrowWidth = 10, ClickHoverGrowHeight = 2;
 
     // ---- Ask page (Claude) ---------------------------------------------------------------------
     public const double AskIdleWidth = 560, AskIdleHeight = 150;

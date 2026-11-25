@@ -141,13 +141,20 @@ public sealed class SpotifyService
     }
 
     // ---- Web API --------------------------------------------------------------------------------------------
-    /// <summary>The track Spotify is playing on your account right now (its id), or null.</summary>
-    public async Task<string?> CurrentTrackIdAsync(CancellationToken ct = default)
+    /// <summary>The track Spotify is playing on your account right now (its id and name), or null.</summary>
+    public async Task<(string Id, string Name)?> CurrentTrackAsync(CancellationToken ct = default)
     {
         using var res = await SendAsync(HttpMethod.Get, "https://api.spotify.com/v1/me/player/currently-playing", ct);
         if (res == null || res.StatusCode != HttpStatusCode.OK) return null;
-        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
-        return doc.RootElement.TryGetProperty("item", out var item) && item.ValueKind == JsonValueKind.Object && item.TryGetProperty("id", out var id) ? id.GetString() : null;
+        try
+        {
+            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object) return null;
+            if (!item.TryGetProperty("id", out var id) || id.GetString() is not { Length: > 0 } trackId) return null;
+            string name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+            return (trackId, name);
+        }
+        catch { return null; }
     }
 
     /// <summary>Whether the track is in your Liked Songs (null when it couldn't be checked).</summary>
@@ -166,8 +173,19 @@ public sealed class SpotifyService
         return res != null && res.IsSuccessStatusCode;
     }
 
+    /// <summary>
+    /// Set when Spotify answers 429 Too Many Requests: until then no Web API call is made at all (calling anyway only
+    /// extends the block, which for a development-mode app can last hours). Null when not limited.
+    /// </summary>
+    public DateTimeOffset? LimitedUntil => _limitedUntil > DateTimeOffset.Now ? _limitedUntil : null;
+    private DateTimeOffset _limitedUntil;
+
+    /// <summary>Raised (on the UI thread) when Spotify starts rate-limiting this app.</summary>
+    public event Action? RateLimited;
+
     private async Task<HttpResponseMessage?> SendAsync(HttpMethod method, string url, CancellationToken ct)
     {
+        if (LimitedUntil != null) return null; // respect Spotify's Retry-After
         try
         {
             var token = await AccessTokenAsync(ct);
@@ -177,6 +195,15 @@ public sealed class SpotifyService
             if (method != HttpMethod.Get) req.Content = new StringContent("", Encoding.UTF8, "application/json");
             var res = await Http.SendAsync(req, ct);
             if (res.StatusCode == HttpStatusCode.Unauthorized) { _accessToken = null; res.Dispose(); return null; }
+            if ((int)res.StatusCode == 429)
+            {
+                var wait = res.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30);
+                _limitedUntil = DateTimeOffset.Now + wait;
+                App.LogError(new HttpRequestException($"Spotify rate limit (429) on {new Uri(url).AbsolutePath}: retry after {wait.TotalSeconds:0} s"));
+                res.Dispose();
+                Ui.Post(() => RateLimited?.Invoke());
+                return null;
+            }
             return res;
         }
         catch { return null; }

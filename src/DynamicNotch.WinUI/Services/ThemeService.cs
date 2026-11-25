@@ -24,7 +24,7 @@ namespace DynamicNotch.Services;
 public sealed class ThemeService
 {
     [Flags]
-    public enum Part { None = 0, Accent = 1, Radius = 2, Motion = 4, Surface = 8, Glow = 16, Visualizer = 32, Layout = 64, Collapsed = 128, Behaviour = 256, Performance = 1024, All = 0x5FF }
+    public enum Part { None = 0, Accent = 1, Radius = 2, Motion = 4, Surface = 8, Glow = 16, Visualizer = 32, Layout = 64, Collapsed = 128, Behaviour = 256, Performance = 1024, Lyrics = 2048, All = 0xDFF }
 
     private readonly SettingsService _settings;
     private readonly List<WeakReference<FrameworkElement>> _roots = new();
@@ -117,12 +117,16 @@ public sealed class ThemeService
             Theme.ShadowIntensity = b.ShadowIntensity;
             Theme.HighlightBorderBrush.Color = Theme.HighlightColor;
         }
-        if (a.GlowEnabled != b.GlowEnabled || a.GlowIntensity != b.GlowIntensity || a.GlowSource != b.GlowSource) parts |= Part.Glow;
+        if (a.GlowEnabled != b.GlowEnabled || a.GlowIntensity != b.GlowIntensity || a.GlowSource != b.GlowSource || a.MusicReactiveGlow != b.MusicReactiveGlow || a.GlowStyle != b.GlowStyle
+            || a.BeatSensitivity != b.BeatSensitivity || a.GlowKick != b.GlowKick || a.GlowBass != b.GlowBass || a.GlowSnare != b.GlowSnare
+            || a.GlowVocal != b.GlowVocal || a.GlowSparkles != b.GlowSparkles || a.GlowDrops != b.GlowDrops || a.GlowDebug != b.GlowDebug) parts |= Part.Glow;
         if (a.Visualizer != b.Visualizer || a.VisualizerColor != b.VisualizerColor) parts |= Part.Visualizer;
         if (a.NotchScale != b.NotchScale || a.Monitor != b.Monitor) parts |= Part.Layout;
         if (a.ShowBatteryRing != b.ShowBatteryRing || a.ShowClock != b.ShowClock || a.ShowDate != b.ShowDate || a.ClockFormat != b.ClockFormat) parts |= Part.Collapsed;
-        if (a.HoverDelayMs != b.HoverDelayMs || a.CollapseDelayMs != b.CollapseDelayMs) parts |= Part.Behaviour;
+        if (a.HoverDelayMs != b.HoverDelayMs || a.CollapseDelayMs != b.CollapseDelayMs || a.ClickToOpen != b.ClickToOpen) parts |= Part.Behaviour;
         if (a.PerformanceMode != b.PerformanceMode) parts |= Part.Performance;
+        if (a.LyricsOnClosedNotch != b.LyricsOnClosedNotch || a.LyricsWordByWord != b.LyricsWordByWord || a.LyricsTextSize != b.LyricsTextSize
+            || a.LyricsOffsetMs != b.LyricsOffsetMs) parts |= Part.Lyrics;
         if (parts != Part.None) Changed?.Invoke(parts);
     }
 

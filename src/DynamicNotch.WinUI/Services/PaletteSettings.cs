@@ -22,4 +22,6 @@ public sealed class PaletteSettings
     /// <summary>Ids of palette functions switched off (see PaletteFunctions.All).</summary>
     public List<string> Disabled { get; set; } = new();
     public List<PaletteShortcut> Shortcuts { get; set; } = new();
+    /// <summary>Strength of the palette's reactive glow (1 = the original look, 0 = off).</summary>
+    public double GlowIntensity { get; set; } = 1.0;
 }
