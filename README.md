@@ -6,7 +6,7 @@ Built with C# / .NET 8 / WinUI 3 (Windows App SDK 1.8, self-contained). The notc
 ## Download
 
 1. Open the [Releases](../../releases) page and download the zip for your PC: `win-x64` (most PCs) or `win-ARM64` (Snapdragon / ARM laptops).
-2. Unzip it anywhere and run `DynamicNotch.exe`. Nothing else needs installing.
+2. Extract it anywhere (e.g. `%LocalAppData%\Programs\DynamicNotch`) and run `DynamicNotch.exe`. Nothing else needs installing: on first run it adds itself to the Start menu (**Dynamic Notch**), and if you move the folder later it updates that shortcut and **Start with Windows** the next time you run it from the new place.
 3. Windows SmartScreen may warn that the app is unrecognised (it isn't code-signed). Click **More info ▸ Run anyway**.
 4. For **Ask Claude**, paste your own Claude API key in Settings. It's encrypted and stored only on your PC.
 

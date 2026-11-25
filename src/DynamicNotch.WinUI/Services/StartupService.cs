@@ -28,6 +28,24 @@ public static class StartupService
         return key?.GetValue(RunValue) != null;
     }
 
+    /// <summary>
+    /// Portable build moved to another folder (or the value was left by another copy): if the Run value exists but
+    /// launches a different exe, point it at this one so "Start with Windows" keeps working. Callers skip packaged
+    /// and dev builds (see <see cref="StartMenuService.IsPortableInstall"/>).
+    /// </summary>
+    public static void RepairRunValue(string exe)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+        if (key?.GetValue(RunValue) is not string current) return;
+        string target = current.Trim();
+        if (target.StartsWith('"'))
+        {
+            int end = target.IndexOf('"', 1);
+            target = end > 0 ? target[1..end] : target.Trim('"');
+        }
+        if (!StartMenuService.SamePath(target, exe)) key.SetValue(RunValue, $"\"{exe}\"");
+    }
+
     /// <summary>Returns the resulting state (the user or policy may refuse).</summary>
     public static async Task<bool> SetEnabledAsync(bool enable)
     {
