@@ -126,6 +126,8 @@ public static class Theme
     public static readonly Color BatteryAmber = Rgb(0xFF, 0xB0, 0x20);
     public static readonly Color BatteryRed = Rgb(0xFF, 0x45, 0x3A);
     public const double NotchRingSize = 16, NotchRingThickness = 2;
+    /// <summary>Space between the battery ring and the Claude usage rings on the closed notch (and between those rings).</summary>
+    public const double UsageRingGap = 5;
     public const double HeaderRingSize = 20, HeaderRingThickness = 2;
     public const double DeviceRingSize = 26, DeviceRingThickness = 1.75;
     public const double RingNumberFontSize = 7.5;
@@ -138,6 +140,8 @@ public static class Theme
     public const double TimeColumnWidth = 48;
     public static readonly GridLength TimeColumn = new(TimeColumnWidth);
     public const double TransportButtonSize = 40, PlayButtonSize = 52;
+    /// <summary>The lyrics layout: how much taller the notch grows, the album art's size and the left column's width.</summary>
+    public const double LyricsExtraHeight = 76, LyricsArtSize = 104, LyricsColumnWidth = 236;
     public static readonly Thickness TransportGap = new(S2, 0, S2, 0);
     public const double AccentMinLightness = 0.58, AccentMinSaturation = 0.35, AccentGlowOpacity = 0.32;
 
@@ -159,6 +163,8 @@ public static class Theme
     public const double ExpandedWidth = 680, ExpandedHeight = 312;
     /// <summary>The music page is a little shorter than the clipboard page (snug under the controls).</summary>
     public const double MusicExpandedHeight = ExpandedHeight - 14;
+    /// <summary>The media player with lyrics open (album art and controls in a column, lyrics beside them).</summary>
+    public const double LyricsExpandedHeight = MusicExpandedHeight + LyricsExtraHeight;
     public const double PillWidth = 400, PillHeight = 72, PillIconSize = 42;
     public const double HeaderHeight = 26, FooterHeight = 30;
     public static readonly GridLength HeaderRow = new(HeaderHeight), FooterRow = new(FooterHeight);
@@ -168,13 +174,17 @@ public static class Theme
     public const double HostWidth = ExpandedWidth + 2 * MaxCornerRadius + 2 * ShadowRoom, HostHeight = ExpandedMaxHeight + ShadowRoom;
     /// <summary>Near-invisible hover strip so the minimal (6px) notch is easy to reach.</summary>
     public const double HoverStripHeight = 14, HoverStripExtra = 60;
+    /// <summary>"Click to open notch": how much the closed notch swells while hovered (DIPs), the cue that it's clickable.</summary>
+    public const double ClickHoverGrowWidth = 10, ClickHoverGrowHeight = 2;
 
     // ---- Ask page (Claude) ---------------------------------------------------------------------
     public const double AskIdleWidth = 560, AskIdleHeight = 150;
     public const double AskThinkingWidth = 560, AskThinkingHeight = 130;
     public const double AskAnswerWidth = 600, AskAnswerMinHeight = 230, AskAnswerMaxHeight = 420;
     /// <summary>The tallest the expanded notch ever gets (the Ask answer); the host window is sized for it.</summary>
-    public const double ExpandedMaxHeight = AskAnswerMaxHeight > ExpandedHeight ? AskAnswerMaxHeight : ExpandedHeight;
+    public const double ExpandedMaxHeight = SpotifyExpandedHeight > AskAnswerMaxHeight ? SpotifyExpandedHeight : AskAnswerMaxHeight;
+    /// <summary>The media player's Spotify panel: the row under the player that the notch grows down to show.</summary>
+    public const double SpotifyPanelHeight = 200, SpotifyExpandedHeight = MusicExpandedHeight + SpotifyPanelHeight;
     public static readonly Thickness AskPadding = new(S4, S3, S4, S3);
     public const double AskInputMinHeight = 36, AskInputLineHeight = 18, AskInputMaxLines = 3;
     public const double AskInputMaxHeight = AskInputLineHeight * AskInputMaxLines + 18;
@@ -333,6 +343,8 @@ public static class Theme
     public const double ActivityIconBox = 26, ActivityIconSize = 20, ActivityCompactIconSize = 16;
     public const double ActivityTrackHeight = 6, ActivityThumbSize = 14;
     public const double ActivityValueWidth = 44;
+    /// <summary>"Next song": a taller pill (the cover sits on the left), its width, and the cover's size and radius.</summary>
+    public const double ActivityNextSongHeight = 64, ActivityWidthNextSong = 340, NextSongArtSize = 44, NextSongArtRadius = 10;
     public const double FontActivityTitle = 13, FontActivityValue = 14, FontActivityGlyph = 20;
     public static readonly Color VolumeColor = Rgb(0xF5, 0xF5, 0xF7);
     public static readonly Color VolumeMutedColor = Argb(0x59, 0xF5, 0xF5, 0xF7);

@@ -61,6 +61,8 @@ internal sealed class CustomisationTabView : Grid
         AddSection(stack, "Font", BuildFont());
         AddSection(stack, "Notch", BuildNotch());
         AddSection(stack, "Closed notch", BuildClosedNotch());
+        AddSection(stack, "Claude usage rings", BuildUsageRings());
+        AddSection(stack, "Lyrics", BuildLyrics());
         AddSection(stack, "Motion", BuildMotion());
         AddSection(stack, "Behaviour", BuildBehaviour());
         AddSection(stack, "Performance", BuildPerformance());
@@ -306,6 +308,19 @@ internal sealed class CustomisationTabView : Grid
         yield return Toggle("Music glow", "Soft colour behind the album art", s => s.GlowEnabled, (s, v) => s.GlowEnabled = v, glowDemo);
         yield return Slider("Glow strength", null, 0, 150, 5, v => $"{v:0}%", s => s.GlowIntensity * 100, (s, v) => s.GlowIntensity = v / 100, glowDemo);
         yield return Choice("Glow colour", null, s => s.GlowSource, (s, v) => s.GlowSource = v, glowDemo, ("album", "Album"), ("accent", "Accent"));
+        yield return Toggle("Music-reactive glow", "The media player's glow pulses with whatever is playing",
+            s => s.MusicReactiveGlow, (s, v) => s.MusicReactiveGlow = v);
+        yield return Choice("Glow style", "Visualiser: every effect. Club: bigger punches, shockwaves and drops. Chill: the album glow, vocals and a gentle bass.",
+            s => s.GlowStyle, (s, v) => s.GlowStyle = v, null, ("visualiser", "Visualiser"), ("club", "Club"), ("chill", "Chill"));
+        yield return Slider("Beat sensitivity", "Higher catches softer beats; lower only the clear ones", 0, 100, 5, v => $"{v:0}%",
+            s => s.BeatSensitivity * 100, (s, v) => s.BeatSensitivity = Math.Round(v / 100, 2));
+        yield return Toggle("Kick punch", "The glow punches out, a ring leaves the art and the art bumps", s => s.GlowKick, (s, v) => s.GlowKick = v);
+        yield return Toggle("Bass glow", "A deep glow along the bottom that moves with the bassline", s => s.GlowBass, (s, v) => s.GlowBass = v);
+        yield return Toggle("Snare flare", "A streak of light flashes across on snares and claps", s => s.GlowSnare, (s, v) => s.GlowSnare = v);
+        yield return Toggle("Vocal aurora", "A flowing ribbon behind the title that follows the vocals", s => s.GlowVocal, (s, v) => s.GlowVocal = v);
+        yield return Toggle("Sparkles", "Hi-hats and cymbals twinkle sparkles upward", s => s.GlowSparkles, (s, v) => s.GlowSparkles = v);
+        yield return Toggle("Drop explosions", "Build-ups tighten the glow; drops burst with colour", s => s.GlowDrops, (s, v) => s.GlowDrops = v);
+        yield return Toggle("Glow debug overlay", "Live levels on the media page; flashes when each kind of beat is detected", s => s.GlowDebug, (s, v) => s.GlowDebug = v);
         yield return Choice("Visualiser", "Music bars in the closed notch", s => s.Visualizer, (s, v) => s.Visualizer = v, visDemo, ("bars", "Bars"), ("wave", "Wave"), ("off", "Off"));
         yield return Choice("Visualiser colour", null, s => s.VisualizerColor, (s, v) => s.VisualizerColor = v, visDemo, ("accent", "Accent"), ("white", "White"));
     }
@@ -318,6 +333,69 @@ internal sealed class CustomisationTabView : Grid
         yield return Toggle("Clock", null, s => s.ShowClock, (s, v) => s.ShowClock = v, demo);
         yield return Toggle("Date", "Short date next to the time", s => s.ShowDate, (s, v) => s.ShowDate = v, demo);
         yield return Choice("Clock format", null, s => s.ClockFormat, (s, v) => s.ClockFormat = v, demo, ("system", "System"), ("12", "12-hour"), ("24", "24-hour"));
+    }
+
+    // ---- Claude usage rings ------------------------------------------------------------------------------------
+    /// <summary>
+    /// Rings next to the battery ring with your Claude plan's usage. They read the Claude Usage page's own data (same
+    /// request, polling and back-off), so they live here beside the battery ring and clock options rather than on a
+    /// page of their own.
+    /// </summary>
+    private IEnumerable<UIElement> BuildUsageRings()
+    {
+        Action demo = () => _theme.PlayDemo(ThemeService.Part.Collapsed);
+        yield return Toggle("Weekly usage", "A purple ring marked W", s => s.UsageRingWeekly, (s, v) => s.UsageRingWeekly = v, demo);
+        yield return Toggle("5-hour usage", "A blue ring marked 5h", s => s.UsageRingFiveHour, (s, v) => s.UsageRingFiveHour = v, demo);
+        yield return Choice("Show on", null, s => s.UsageRingPlace, (s, v) => s.UsageRingPlace = v, demo,
+            ("closed", "Closed notch"), ("open", "Open notch"), ("both", "Both"));
+        yield return Toggle("Always show usage percent", "The % in each ring all the time, instead of 5h / W until you hover",
+            s => s.UsageRingAlwaysPercent, (s, v) => s.UsageRingAlwaysPercent = v, demo);
+        yield return Extend(new TextBlock
+        {
+            Text = "Right of the battery ring. They turn amber from 60% and red from 85%. Hover one in the open notch for the exact % and when it resets. Uses the same data as the Claude Usage page.",
+            Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.TertiaryText, TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.None, Margin = new Thickness(0, 0, 0, Theme.S2),
+        });
+    }
+
+    // ---- Lyrics ----------------------------------------------------------------------------------------------
+    private IEnumerable<UIElement> BuildLyrics()
+    {
+        yield return Toggle("Show lyrics on closed notch", "The line being sung, while music plays (not in minimal mode)",
+            s => s.LyricsOnClosedNotch, (s, v) => s.LyricsOnClosedNotch = v);
+        yield return Toggle("Word-by-word highlighting", "Words light up as they're sung; off lights the whole line at once",
+            s => s.LyricsWordByWord, (s, v) => s.LyricsWordByWord = v);
+        yield return Slider("Lyrics text size", null, 80, 130, 5, v => $"{v:0}%",
+            s => s.LyricsTextSize * 100, (s, v) => s.LyricsTextSize = Math.Round(v / 100, 2));
+        yield return Slider("Lyrics glow intensity", "Soft light in the album's colours around the current line and the word being sung. 0% turns it off.",
+            0, 200, 5, v => v <= 0 ? "Off" : $"{v:0}%", s => s.LyricsGlow * 100, (s, v) => s.LyricsGlow = Math.Round(v / 100, 2));
+        yield return Slider("Sync offset", "Lyrics early? Raise it to delay them. Late? Lower it.", -2000, 2000, 50,
+            v => v == 0 ? "0 ms" : $"{v:+0;-0} ms", s => s.LyricsOffsetMs, (s, v) => s.LyricsOffsetMs = (int)Math.Round(v));
+
+        // Clear cache: shows how much is saved; lyrics already showing stay until the song changes.
+        var clear = new PillButton(Icons.Delete, "Clear lyrics cache", quiet: true) { HorizontalAlignment = HorizontalAlignment.Right };
+        var note = new TextBlock { Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, Margin = Theme.GapTopS1 };
+        async void ShowSize()
+        {
+            var (files, bytes) = await Services.Lyrics.LyricsCache.SizeAsync();
+            note.Text = files == 0 ? "Nothing saved yet. Songs are saved here so they load instantly and work offline."
+                : $"{files} song{(files == 1 ? "" : "s")} saved ({(bytes < 1024 * 1024 ? $"{bytes / 1024.0:0} KB" : $"{bytes / (1024.0 * 1024):0.0} MB")}), for instant loading and offline use";
+        }
+        clear.Click += async () =>
+        {
+            int n = await Services.Lyrics.LyricsCache.ClearAsync();
+            note.Text = n == 0 ? "The lyrics cache was already empty" : $"Cleared {n} saved song{(n == 1 ? "" : "s")}";
+        };
+        var row = Row("Lyrics cache", null, clear, natural: true);
+        ((StackPanel)row.Children[0]).Children.Add(note);
+        _refreshers.Add(_ => ShowSize());
+        yield return row;
+        yield return Extend(new TextBlock
+        {
+            Text = "Lyrics from LRCLIB (lrclib.net), a free, open lyrics database.",
+            Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.TertiaryText, TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.None, Margin = new Thickness(0, 0, 0, Theme.S2),
+        });
     }
 
     // ---- Motion ----------------------------------------------------------------------------------------------
@@ -340,6 +418,8 @@ internal sealed class CustomisationTabView : Grid
     // ---- Behaviour -------------------------------------------------------------------------------------------
     private IEnumerable<UIElement> BuildBehaviour()
     {
+        yield return Toggle("Click to open notch", "Hovering won't open it; click the notch instead. Moving away, clicking elsewhere or Esc still close it.",
+            s => s.ClickToOpen, (s, v) => s.ClickToOpen = v);
         yield return Slider("Open after hovering", "How long the pointer rests on the notch first", 0, 600, 10, v => $"{v:0} ms",
             s => s.HoverDelayMs, (s, v) => s.HoverDelayMs = (int)v);
         yield return Slider("Close after leaving", "How long it stays open once the pointer leaves", 150, 2000, 50, v => $"{v:0} ms",

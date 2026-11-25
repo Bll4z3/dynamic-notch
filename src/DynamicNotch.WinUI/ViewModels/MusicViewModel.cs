@@ -41,6 +41,8 @@ public sealed class MusicViewModel : ObservableObject
     public bool CanNext => _snap.CanNext;
     public bool CanPrevious => _snap.CanPrevious;
     public string SourceApp => _snap.SourceApp;
+    /// <summary>The raw media snapshot (an empty title / artist stays empty: no "Unknown title" fallback).</summary>
+    public MediaSnapshot Snapshot => _snap;
     public bool HasMultipleSessions => _snap.SessionCount > 1;
     public string SessionHint => HasMultipleSessions ? $"{_snap.SourceApp} · click art to switch ({_snap.SessionCount})" : _snap.SourceApp;
 
@@ -83,7 +85,9 @@ public sealed class MusicViewModel : ObservableObject
 
     private void OnChanged(MediaSnapshot s)
     {
-        bool trackChanged = s.Title != _snap.Title || s.Artist != _snap.Artist || !ReferenceEquals(s.Artwork, _snap.Artwork);
+        // A new title or cover is a new song; the artist alone changing (a player refining its metadata, or the late
+        // report of a song the notch already predicted) isn't, so nothing animates twice.
+        bool trackChanged = s.Title != _snap.Title || !ReferenceEquals(s.Artwork, _snap.Artwork) || (s.Artist != _snap.Artist && string.IsNullOrEmpty(_snap.Title));
         _snap = s;
         OnPropertyChanged(string.Empty); // refresh all bindings
         UpdateTime();

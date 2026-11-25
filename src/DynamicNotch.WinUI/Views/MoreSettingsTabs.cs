@@ -27,7 +27,8 @@ internal sealed class PillsTabView : Grid
             ("Brightness", "Laptop screens only", () => vm.Brightness, v => vm.Brightness = v, nameof(vm.Brightness)),
             ("Caps Lock", "When Caps Lock turns on or off", () => vm.CapsLock, v => vm.CapsLock = v, nameof(vm.CapsLock)),
             ("Charging and battery", "Plugged in, unplugged, low battery", () => vm.Battery, v => vm.Battery = v, nameof(vm.Battery)),
-            ("Downloads", "Progress of downloads in your Downloads folder", () => vm.Downloads, v => vm.Downloads = v, nameof(vm.Downloads))));
+            ("Downloads", "Progress of downloads in your Downloads folder", () => vm.Downloads, v => vm.Downloads = v, nameof(vm.Downloads)),
+            ("Next song", "The cover, title and artist when the song changes", () => vm.NextSong, v => vm.NextSong = v, nameof(vm.NextSong))));
         stack.Children.Add(Section("Alerts"));
         stack.Children.Add(Card(vm,
             ("App notifications", "Mirrors Windows notifications (MSIX build)", () => vm.AppNotifications, v => vm.AppNotifications = v, nameof(vm.AppNotifications)),

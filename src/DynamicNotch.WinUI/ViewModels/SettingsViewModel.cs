@@ -27,7 +27,7 @@ public sealed class SettingsViewModel : ObservableObject
         {
             new("General", Icons.Settings, General),
             new("Customisation", Icons.Palette, Customisation),
-            new("Claude API key", Icons.Key, ApiKey),
+            // (The Claude API key is a section of General: ApiKey is shown there.)
             new("Layout", Icons.Dashboard, Layout),
             new("Command Palette", Icons.Search, PaletteTab),
             new("Pills", Icons.Bell, Pills),
@@ -49,7 +49,15 @@ public sealed class SettingsViewModel : ObservableObject
 
     /// <summary>Selects the Updates tab (tray "Check for updates…", update pill).</summary>
     public void SelectUpdates() => SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, Updates));
-    public void SelectApiKey() => SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, ApiKey));
+    /// <summary>Ask needs a key: General, with its Claude API key box focused (see <see cref="ApiKeyFocusPending"/>).</summary>
+    public void SelectApiKey()
+    {
+        ApiKeyFocusPending = true;
+        SelectedTab = Tabs.First(t => ReferenceEquals(t.Content, General));
+    }
+
+    /// <summary>Set by <see cref="SelectApiKey"/>; the window focuses the key box once General is showing, then clears it.</summary>
+    public bool ApiKeyFocusPending { get; set; }
 
     private SettingsTab _selected;
     public SettingsTab SelectedTab
@@ -312,6 +320,41 @@ public sealed class GeneralTabViewModel : ObservableObject
         set { var v = value.Trim(); if (v != SpotifyClientId) _settings.Update(s => s.SpotifyClientId = v.Length == 0 ? null : v); }
     }
 
+    /// <summary>What the notch's playlist panel lists: "recent", "selected" or "both".</summary>
+    public string SpotifyPlaylistSource
+    {
+        get => _settings.Current.SpotifyPlaylistSource;
+        set { if (value != SpotifyPlaylistSource && value is "recent" or "selected" or "both") _settings.Update(s => s.SpotifyPlaylistSource = value); }
+    }
+
+    /// <summary>The playlists picked for the notch's playlist panel, in the order they were picked.</summary>
+    public IReadOnlyList<SpotifyPinnedPlaylist> PinnedPlaylists => _settings.Current.SpotifyPinnedPlaylists;
+
+    public void SetPinned(SpotifyPlaylist p, bool pinned)
+    {
+        bool has = PinnedPlaylists.Any(x => x.Id == p.Id);
+        if (pinned == has) return;
+        _settings.Update(s =>
+        {
+            if (pinned) s.SpotifyPinnedPlaylists.Add(new SpotifyPinnedPlaylist { Id = p.Id, Uri = p.Uri, Name = p.Name, ImageUrl = p.ImageUrl });
+            else s.SpotifyPinnedPlaylists.RemoveAll(x => x.Id == p.Id);
+        });
+    }
+
+    /// <summary>Refreshes the stored names / covers of picked playlists from a fresh list of yours.</summary>
+    public void UpdatePinnedDetails(IReadOnlyList<SpotifyPlaylist> mine)
+    {
+        bool changed = false;
+        foreach (var pin in PinnedPlaylists)
+            if (mine.FirstOrDefault(m => m.Id == pin.Id) is { } m && (m.Name != pin.Name || m.ImageUrl != pin.ImageUrl || m.Uri != pin.Uri)) { changed = true; break; }
+        if (!changed) return;
+        _settings.Update(s =>
+        {
+            foreach (var pin in s.SpotifyPinnedPlaylists)
+                if (mine.FirstOrDefault(m => m.Id == pin.Id) is { } m) { pin.Name = m.Name; pin.ImageUrl = m.ImageUrl; pin.Uri = m.Uri; }
+        });
+    }
+
     // ---- Screenshot shelf ----
     /// <summary>On = new screenshots land in the notch (and the Screenshots page is shown); off = neither.</summary>
     public bool ScreenshotShelf
@@ -399,6 +442,7 @@ public sealed class PillsTabViewModel : ObservableObject
     public bool CapsLock { get => Get(s => s.ShowCapsLockPill); set => Put(value, s => s.ShowCapsLockPill, (s, v) => s.ShowCapsLockPill = v, nameof(CapsLock)); }
     public bool Battery { get => Get(s => s.ShowBatteryPills); set => Put(value, s => s.ShowBatteryPills, (s, v) => s.ShowBatteryPills = v, nameof(Battery)); }
     public bool Downloads { get => Get(s => s.ShowDownloadPill); set => Put(value, s => s.ShowDownloadPill, (s, v) => s.ShowDownloadPill = v, nameof(Downloads)); }
+    public bool NextSong { get => Get(s => s.ShowNextSongPill); set => Put(value, s => s.ShowNextSongPill, (s, v) => s.ShowNextSongPill = v, nameof(NextSong)); }
     public bool AppNotifications { get => Get(s => s.ShowAppNotifications); set => Put(value, s => s.ShowAppNotifications, (s, v) => s.ShowAppNotifications = v, nameof(AppNotifications)); }
     public bool Devices { get => Get(s => s.ShowDevicePills); set => Put(value, s => s.ShowDevicePills, (s, v) => s.ShowDevicePills = v, nameof(Devices)); }
     public bool Network { get => Get(s => s.ShowNetworkPills); set => Put(value, s => s.ShowNetworkPills, (s, v) => s.ShowNetworkPills = v, nameof(Network)); }

@@ -33,10 +33,15 @@ internal sealed class LayoutTabView : Grid
     private readonly StackPanel _previewPages = new() { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom };
     private readonly TextBlock _previewPageName = new();
     private readonly Dictionary<string, Grid> _rows = new();
+    private readonly Dictionary<string, Segmented> _picks = new();
+    private readonly ScrollViewer _scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+    private readonly Canvas _dragLayer = new() { IsHitTestVisible = false }; // the lifted row floats here while dragged
+    private readonly Microsoft.UI.Xaml.Shapes.Rectangle _placeholder = new();  // the drop indicator: where it will land
     private Grid? _dragRow;
     private string? _dragId;
-    private double _dragStartY, _dragShift;
+    private double _grabY;
     private string? _justMoved;
+    private const string EmptyTag = "layout:empty";
 
     public LayoutTabView(LayoutTabViewModel vm)
     {
@@ -56,9 +61,29 @@ internal sealed class LayoutTabView : Grid
         stack.Children.Add(_iconList);
         stack.Children.Add(Section("Hidden", "Not shown (the Ask Claude and palette hotkeys still work)"));
         stack.Children.Add(_hiddenList);
-        Children.Add(new ScrollViewer { Content = stack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        _scroll.Content = stack;
+        Children.Add(_scroll);
+        Children.Add(_dragLayer);
+
+        // Drop indicator: a dashed, accent-outlined slot the size of the dragged row.
+        _placeholder.RadiusX = _placeholder.RadiusY = Theme.Radius.TopLeft;
+        _placeholder.Stroke = Theme.AccentBrush;
+        _placeholder.StrokeThickness = 1.5;
+        _placeholder.StrokeDashArray = new Microsoft.UI.Xaml.Media.DoubleCollection { 4, 3 };
+        _placeholder.Fill = Theme.CardHoverBrush;
+        _placeholder.IsHitTestVisible = false;
+        Motions.SlideIntoPlace(_placeholder);
+
+        // The drag is captured by this whole view, not the grip: rows (and their grips) move between lists while
+        // dragging, and an element leaving the tree loses its capture (that used to end the drag half-way).
+        PointerMoved += (_, e) => { if (_dragRow != null) { Drag(e); e.Handled = true; } };
+        PointerReleased += (_, e) => { if (_dragRow != null) { ReleasePointerCapture(e.Pointer); EndDrag(); e.Handled = true; } };
+        PointerCanceled += (_, _) => EndDrag();
+        PointerCaptureLost += (_, _) => EndDrag();
         Refresh();
     }
+
+    private Placement PlacementFor(StackPanel list) => list == _pageList ? Placement.Page : list == _iconList ? Placement.Icon : Placement.Hidden;
 
     private static FrameworkElement Section(string title, string caption)
     {
@@ -132,9 +157,11 @@ internal sealed class LayoutTabView : Grid
                 list.Children.Add(row);
                 if (id == _justMoved) Motions.PopIn(row);
             }
-            if (ids.Count == 0)
-                list.Children.Add(new TextBlock { Text = placement == Placement.Hidden ? "Nothing hidden" : "None", Style = SettingsUi.StyleOf("CaptionText"), Margin = new Thickness(Theme.S2, 0, 0, 0) });
+            // Every list keeps its "empty" caption (shown only while it has no rows), so a list stays a drop target.
+            list.Children.Add(new TextBlock { Text = placement == Placement.Hidden ? "Nothing hidden" : "None", Style = SettingsUi.StyleOf("CaptionText"), Margin = new Thickness(Theme.S2, 0, 0, 0), Tag = EmptyTag });
+            foreach (var id in ids) if (_picks.TryGetValue(id, out var pick)) pick.Value = placement.ToString();
         }
+        UpdateEmptyLabels();
         RefreshPreview();
         _justMoved = null;
     }
@@ -151,12 +178,9 @@ internal sealed class LayoutTabView : Grid
 
         var grip = new Border { Width = Theme.GripHitWidth, Background = Theme.TransparentBrush, VerticalAlignment = VerticalAlignment.Stretch,
             Child = new VectorIcon { Data = Icons.Grip, Size = Theme.IconSmall, Foreground = Theme.TertiaryText, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
-        ToolTipService.SetToolTip(grip, "Drag to reorder");
-        grip.PointerEntered += (_, _) => grip.ProtectedCursorSet(InputSystemCursorShape.SizeNorthSouth);
-        grip.PointerPressed += (_, e) => { if (grip.CapturePointer(e.Pointer)) BeginDrag(row, id, e); e.Handled = true; };
-        grip.PointerMoved += (_, e) => { if (_dragRow == row) Drag(e); };
-        grip.PointerReleased += (_, e) => { grip.ReleasePointerCapture(e.Pointer); EndDrag(); };
-        grip.PointerCaptureLost += (_, _) => EndDrag();
+        ToolTipService.SetToolTip(grip, isSettings ? "Drag to reorder" : "Drag to reorder, or into another section");
+        grip.PointerEntered += (_, _) => grip.ProtectedCursorSet(InputSystemCursorShape.SizeAll);
+        grip.PointerPressed += (_, e) => { e.Handled = true; if (e.GetCurrentPoint(grip).Properties.IsLeftButtonPressed) BeginDrag(row, id, e); };
         line.Children.Add(grip);
 
         var tile = new Border
@@ -201,6 +225,7 @@ internal sealed class LayoutTabView : Grid
             };
             Grid.SetColumn(pick, 5);
             line.Children.Add(pick);
+            _picks[id] = pick;
         }
         else
         {
@@ -220,63 +245,182 @@ internal sealed class LayoutTabView : Grid
         Motions.PopIn(_message);
     }
 
-    /// <summary>One place up / down within its group (pages or icons); the row slides there.</summary>
+
+    /// <summary>
+    /// ↑ / ↓: one place within its section, saved at once; the row slides there. The neighbour is what moves in the
+    /// panel, so the clicked row (and the arrow under the pointer) stays put in the tree and repeated clicks keep
+    /// working. (Moving the clicked row itself took its button out of the tree mid-click, and Hidden wasn't saved.)
+    /// </summary>
     private void Shift(string id, int delta)
     {
-        if (!_rows.TryGetValue(id, out var row) || row.Parent is not StackPanel list) return;
-        int i = list.Children.IndexOf(row), j = i + delta;
-        if (j < 0 || j >= list.Children.Count || list.Children[j] is not Grid) return;
-        if (list != _hiddenList) _pages.Shift(id, delta);
-        list.Children.RemoveAt(i);
-        list.Children.Insert(j, row);
+        if (_dragRow != null || !_rows.TryGetValue(id, out var row) || row.Parent is not StackPanel list) return;
+        var rows = list.Children.OfType<Grid>().ToList();
+        int i = rows.IndexOf(row), j = i + delta;
+        if (i < 0 || j < 0 || j >= rows.Count) return;
+        if (!_pages.MoveTo(id, PlacementFor(list), j)) return;
+        var other = rows[j];
+        list.Children.Remove(other);
+        int at = list.Children.IndexOf(row);
+        list.Children.Insert(delta > 0 ? at : at + 1, other);
         RefreshPreview();
     }
 
-    // ---- Drag to reorder (within a group) ----------------------------------------------------------------------
+    // ---- Drag and drop: reorder within a section or move between Pages, Header icons and Hidden ------------------
+    /// <summary>Lifts the row out of its list into the drag layer, leaving the dashed drop slot in its place.</summary>
     private void BeginDrag(Grid row, string id, PointerRoutedEventArgs e)
     {
-        if (row.Parent is not StackPanel list) return;
+        if (_dragRow != null || row.Parent is not StackPanel list) return;
+        if (!CapturePointer(e.Pointer)) return;
+        var at = row.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, 0));
+        _grabY = e.GetCurrentPoint(this).Position.Y - at.Y;
         _dragRow = row;
         _dragId = id;
-        _dragStartY = e.GetCurrentPoint(list).Position.Y;
-        _dragShift = 0;
+        _message.Visibility = Visibility.Collapsed;
+
         var v = Anim.VisualOf(row, translation: true);
-        v.ImplicitAnimations = null; // it follows the pointer; only the others glide
+        v.ImplicitAnimations = null; // it follows the pointer exactly; only the others glide
         v.StopAnimation("Translation");
-        v.StopAnimation("Scale");
-        Canvas.SetZIndex(row, 1);
+        v.Properties.InsertVector3("Translation", Vector3.Zero);
+        double width = row.ActualWidth;
+        _placeholder.Height = row.ActualHeight;
+        int index = list.Children.IndexOf(row);
+        list.Children.RemoveAt(index);
+        list.Children.Insert(index, _placeholder);
+        row.Width = width;
+        Canvas.SetLeft(row, at.X);
+        Canvas.SetTop(row, at.Y);
+        _dragLayer.Children.Add(row);
+
+        // Lift: a touch bigger and lighter, animated.
         Motions.CentreOrigin(row);
-        v.Scale = new Vector3(1.02f, 1.02f, 1);
+        var c = v.Compositor;
+        var lift = c.CreateVector3KeyFrameAnimation();
+        lift.InsertKeyFrame(1, new Vector3(1.025f, 1.025f, 1), c.CreateCubicBezierEasingFunction(new Vector2(0.2f, 0.9f), new Vector2(0.3f, 1f)));
+        lift.Duration = TimeSpan.FromMilliseconds(160);
+        v.StartAnimation("Scale", lift);
+        var fade = c.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1, 0.94f);
+        fade.Duration = TimeSpan.FromMilliseconds(160);
+        v.StartAnimation("Opacity", fade);
     }
 
+    /// <summary>The row follows the pointer; the drop slot moves to where it would land (the rows around it glide).</summary>
     private void Drag(PointerRoutedEventArgs e)
     {
-        if (_dragRow?.Parent is not StackPanel list || _dragId == null) return;
-        double dy = e.GetCurrentPoint(list).Position.Y - _dragStartY - _dragShift;
-        double step = _dragRow.ActualHeight + list.Spacing;
-        int i = list.Children.IndexOf(_dragRow);
-        if (dy > step / 2 && i < list.Children.Count - 1) { Shift(_dragId, +1); _dragShift += step; dy -= step; }
-        else if (dy < -step / 2 && i > 0) { Shift(_dragId, -1); _dragShift -= step; dy += step; }
-        Anim.VisualOf(_dragRow, translation: true).Properties.InsertVector3("Translation", new Vector3(0, (float)dy, 0));
+        if (_dragRow == null || _dragId == null) return;
+        var point = e.GetCurrentPoint(this);
+        if (!point.Properties.IsLeftButtonPressed) { EndDrag(); return; } // never stuck to a released mouse
+        double y = point.Position.Y;
+        Canvas.SetTop(_dragRow, y - _grabY);
+        if (DropTarget(y) is { } t) MovePlaceholder(t.list, t.index);
+        AutoScroll(y);
     }
 
+    /// <summary>The section and position under the pointer, or null where the row can't go.</summary>
+    private (StackPanel list, int index)? DropTarget(double y)
+    {
+        bool settings = _dragId == PageRegistry.SettingsId;
+        bool lastPage = _dragId != null && Enum.TryParse<PageId>(_dragId, out var pid) && _pages.IsEnabled(pid) && _pages.Enabled.Count <= 1;
+        StackPanel? best = null;
+        double bestDistance = double.MaxValue;
+        foreach (var list in new[] { _pageList, _iconList, _hiddenList })
+        {
+            if (settings && list != _iconList) continue; // Settings is always a header icon
+            if (lastPage && list != _pageList) continue; // keep at least one page
+            double top = list.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
+            double bottom = top + Math.Max(list.ActualHeight, 24);
+            double d = y < top ? top - y : y > bottom ? y - bottom : 0;
+            if (d < bestDistance) { bestDistance = d; best = list; }
+        }
+        if (best == null) return null;
+        int index = 0;
+        foreach (var r in best.Children.OfType<Grid>())
+        {
+            double mid = r.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, r.ActualHeight / 2)).Y;
+            if (y > mid) index++;
+        }
+        return (best, index);
+    }
+
+    /// <summary>Rows of <paramref name="list"/> above the drop slot (its index within the section).</summary>
+    private int SlotIndex(StackPanel list)
+    {
+        int slot = list.Children.IndexOf(_placeholder);
+        return list.Children.OfType<Grid>().Count(r => list.Children.IndexOf(r) < slot);
+    }
+
+    private void MovePlaceholder(StackPanel list, int index)
+    {
+        if (_placeholder.Parent == list && SlotIndex(list) == index) return;
+        if (_placeholder.Parent is StackPanel from) from.Children.Remove(_placeholder);
+        var rows = list.Children.OfType<Grid>().ToList();
+        int at = index < rows.Count ? list.Children.IndexOf(rows[index])
+            : rows.Count > 0 ? list.Children.IndexOf(rows[^1]) + 1 : 0;
+        list.Children.Insert(at, _placeholder);
+        UpdateEmptyLabels();
+    }
+
+    /// <summary>"None" / "Nothing hidden" only while a section has no rows and the drop slot isn't in it.</summary>
+    private void UpdateEmptyLabels()
+    {
+        foreach (var list in new[] { _pageList, _iconList, _hiddenList })
+        {
+            bool empty = !list.Children.OfType<Grid>().Any() && _placeholder.Parent != list;
+            foreach (var label in list.Children.OfType<TextBlock>().Where(t => Equals(t.Tag, EmptyTag)))
+                label.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>Near the top / bottom edge of the list area, scroll so far sections can be reached.</summary>
+    private void AutoScroll(double y)
+    {
+        double top = _scroll.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
+        double h = _scroll.ActualHeight, edge = 48;
+        double speed = y < top + edge ? -(top + edge - y) : y > top + h - edge ? y - (top + h - edge) : 0;
+        if (speed != 0) _scroll.ChangeView(null, Math.Clamp(_scroll.VerticalOffset + speed * 0.5, 0, _scroll.ScrollableHeight), null, disableAnimation: true);
+    }
+
+    /// <summary>Drops the row where the slot is: saves the move (applies to the notch at once) and the row glides home.</summary>
     private void EndDrag()
     {
         if (_dragRow == null) return;
         var row = _dragRow;
+        string id = _dragId!;
         _dragRow = null;
         _dragId = null;
+        var from = new Windows.Foundation.Point(Canvas.GetLeft(row), Canvas.GetTop(row));
+        _dragLayer.Children.Remove(row);
+        row.Width = double.NaN;
+
+        // Save: the section the slot is in, at the slot's position (one change, applied to the notch straight away).
+        if (_placeholder.Parent is StackPanel list)
+        {
+            int index = SlotIndex(list);
+            list.Children.Remove(_placeholder);
+            if (!_pages.MoveTo(id, PlacementFor(list), index))
+                ShowMessage("Keep at least one page: make another feature a page first.");
+        }
+        Refresh(); // rebuild the lists from the saved layout: the row lands in its slot, its switch shows the section
+        UpdateLayout();
+
+        // The row glides from where it was dropped into its slot and settles back to its normal size.
         var v = Anim.VisualOf(row, translation: true);
         var c = v.Compositor;
+        var to = row.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, 0));
+        var ease = c.CreateCubicBezierEasingFunction(new Vector2(0.2f, 0.9f), new Vector2(0.3f, 1f));
         var back = c.CreateVector3KeyFrameAnimation();
-        back.InsertKeyFrame(1, Vector3.Zero, c.CreateCubicBezierEasingFunction(new Vector2(0.2f, 0.9f), new Vector2(0.3f, 1f)));
-        back.Duration = TimeSpan.FromMilliseconds(220);
+        back.InsertKeyFrame(0, new Vector3((float)(from.X - to.X), (float)(from.Y - to.Y), 0));
+        back.InsertKeyFrame(1, Vector3.Zero, ease);
+        back.Duration = TimeSpan.FromMilliseconds(240);
         v.StartAnimation("Translation", back);
         var scale = c.CreateVector3KeyFrameAnimation();
-        scale.InsertKeyFrame(1, Vector3.One);
-        scale.Duration = TimeSpan.FromMilliseconds(180);
+        scale.InsertKeyFrame(1, Vector3.One, ease);
+        scale.Duration = TimeSpan.FromMilliseconds(200);
         v.StartAnimation("Scale", scale);
-        Canvas.SetZIndex(row, 0);
+        var fade = c.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1, 1f);
+        fade.Duration = TimeSpan.FromMilliseconds(200);
+        v.StartAnimation("Opacity", fade);
         Motions.SlideIntoPlace(row);
     }
 }

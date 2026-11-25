@@ -40,9 +40,9 @@ public sealed class VpnService : IDisposable
     {
         var now = Snapshot();
         foreach (var name in now.Except(_active))
-            Pill?.Invoke(new PillRequest(PillSource.Vpn, "VPN connected", name, Icons.Vpn));
+            Pill?.Invoke(new PillRequest(PillSource.Vpn, "VPN connected", name, Icons.Vpn, Anim: PillAnim.VpnOn));
         foreach (var name in _active.Except(now))
-            Pill?.Invoke(new PillRequest(PillSource.Vpn, "VPN disconnected", name, Icons.Vpn, Badge: "off"));
+            Pill?.Invoke(new PillRequest(PillSource.Vpn, "VPN disconnected", name, Icons.Vpn, Badge: "off", Anim: PillAnim.VpnOff));
         _active = now;
     }
 

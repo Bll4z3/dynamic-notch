@@ -165,6 +165,32 @@ public sealed class PageRegistry
     }
 
     /// <summary>Moves a page to <paramref name="index"/> among the pages.</summary>
+    /// <summary>
+    /// Puts a feature at <paramref name="index"/> of the <paramref name="placement"/> group (Pages, Header icons or
+    /// Hidden), moving it between groups if needed, in one change (one save, one notch update). False when the move
+    /// isn't allowed: Settings is always a header icon, and at least one feature stays a page.
+    /// </summary>
+    public bool MoveTo(string id, Placement placement, int index)
+    {
+        var item = Items.FirstOrDefault(i => i.Id == id);
+        if (item == null) return false;
+        if (id == SettingsId && placement != Placement.Icon) return false;
+        if (item.Placement == Placement.Page && placement != Placement.Page && Enabled.Count <= 1) return false;
+        var others = Items.Where(i => i.Placement == placement && !ReferenceEquals(i, item)).ToList();
+        index = Math.Clamp(index, 0, others.Count);
+        if (item.Placement == placement && Items.Where(i => i.Placement == placement).ToList().IndexOf(item) == index) return true;
+        _settings.Update(s =>
+        {
+            s.Layout.Remove(item);
+            item.Placement = placement;
+            int at = index < others.Count ? s.Layout.IndexOf(others[index])
+                : others.Count > 0 ? s.Layout.IndexOf(others[^1]) + 1 : s.Layout.Count;
+            s.Layout.Insert(at, item);
+        });
+        Changed?.Invoke();
+        return true;
+    }
+
     public void Move(PageId id, int index)
     {
         int from = IndexOf(id);

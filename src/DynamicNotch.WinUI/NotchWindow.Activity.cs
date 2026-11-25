@@ -32,6 +32,9 @@ public sealed partial class NotchWindow
         ActivityLayer.Children.Add(_activityView);
         ActivityLayer.Width = Theme.ActivityWidthSlider;
         ActivityLayer.Height = Theme.ActivityHeight;
+        // "Next song" has its own layout (cover, label, title, artist over the blurred cover), in the same layer.
+        _nextSongView = new NextSongView { Width = Theme.ActivityWidthNextSong, Visibility = Visibility.Collapsed };
+        ActivityLayer.Children.Add(_nextSongView);
         _activityContent = new CompSpring(n, "Act", Motion.Pop, 0);
         var lv = Anim.VisualOf(ActivityLayer);
         lv.StartAnimation("Opacity", Anim.Expr(c, "Clamp(N.Act, 0, 1)", ("N", n)));
@@ -66,17 +69,29 @@ public sealed partial class NotchWindow
         Vm.Activity.PropertyChanged += OnActivityChanged;
     }
 
+    private NextSongView _nextSongView = null!;
+
     private double ActivityWidth() => Vm.Activity.Current is { } a ? ActivityPillView.WidthFor(a.Kind) : Theme.ActivityWidthSlider;
+    private double ActivityHeight() => Vm.Activity.Current is { } a ? ActivityPillView.HeightFor(a.Kind) : Theme.ActivityHeight;
+    private bool IsNextSongActivity => Vm.Activity.Current?.Kind == ActivityKind.NextSong;
 
     private void OnActivityUpdated(Activity a, bool sameKind)
     {
         double w = ActivityPillView.WidthFor(a.Kind);
         ActivityLayer.Width = w;
+        ActivityLayer.Height = ActivityPillView.HeightFor(a.Kind);
         _activityView.Width = w;
         // A new kind while the pill is already up: cross-morph (the shape re-targets in ApplyTargets).
         bool entering = _state != NotchState.Activity;
-        _activityView.Apply(a, sameKind, entering);
-        _activityCompact.Apply(a, sameKind, entering: _compactShow.Target < 1);
+        bool song = a.Kind == ActivityKind.NextSong;
+        _activityView.Visibility = song ? Visibility.Collapsed : Visibility.Visible;
+        _nextSongView.Visibility = song ? Visibility.Visible : Visibility.Collapsed;
+        if (song) _nextSongView.Apply(a, entering || !sameKind);
+        else
+        {
+            _activityView.Apply(a, sameKind, entering);
+            _activityCompact.Apply(a, sameKind, entering: _compactShow.Target < 1);
+        }
         if (_state == NotchState.Activity && !sameKind) ApplyTargets();
         UpdateCompactActivity();
     }
@@ -92,7 +107,7 @@ public sealed partial class NotchWindow
     /// <summary>The slim twin is visible only while the notch is open and an activity is up.</summary>
     private void UpdateCompactActivity()
     {
-        bool show = _state == NotchState.Expanded && Vm.Activity.HasActivity;
+        bool show = _state == NotchState.Expanded && Vm.Activity.HasActivity && !IsNextSongActivity; // the open player shows the song itself
         if (show && _compactShow.Target < 1) _activityCompact.Enter();
         _compactShow.SetTarget(show ? 1 : 0, show ? Motion.Pop : Motion.FadeOut);
         _activityCompact.IsHitTestVisible = show;

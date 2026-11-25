@@ -30,8 +30,10 @@ public sealed record UsageResult(UsageSnapshot? Snapshot, UsageFailure Failure, 
 /// Security: the OAuth access token is read from Claude Code's credentials file
 /// (%USERPROFILE%\.claude\.credentials.json) into memory for each request only. It is never logged,
 /// never written anywhere, never stored in settings, and only ever sent in the Authorization header to
-/// api.anthropic.com (redirects are disabled, so it can't be forwarded to another host). The token is
-/// never refreshed here: refreshing would mean writing Claude Code's file.
+/// api.anthropic.com (redirects are disabled, so it can't be forwarded to another host). This class
+/// never writes Claude Code's file: when the token has expired (or is about to), it asks Claude Code to
+/// renew it via <see cref="ClaudeCliRefresher"/>, which runs the CLI hidden, so Claude Code doesn't
+/// have to be open.
 /// </summary>
 public sealed class ClaudeUsageService
 {
@@ -52,11 +54,41 @@ public sealed class ClaudeUsageService
     public static string CredentialsPath { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", ".credentials.json");
 
+    /// <summary>Renew the sign-in this long before it expires, so the numbers never go blank.</summary>
+    private static readonly TimeSpan RenewEarly = TimeSpan.FromMinutes(5);
+
     public async Task<UsageResult> FetchAsync(CancellationToken ct)
     {
-        var (token, failure) = ReadToken();
+        var (token, failure, expires) = ReadToken();
+
+        // Expired or about to: have Claude Code renew its own sign-in in the background, then re-read it.
+        bool refreshed = false;
+        if (failure?.Failure == UsageFailure.Expired || (expires is { } e && e - DateTimeOffset.UtcNow < RenewEarly))
+        {
+            refreshed = true;
+            if (await ClaudeCliRefresher.TryRefreshAsync(ct).ConfigureAwait(false))
+            {
+                var again = ReadToken();
+                if (again.token != null) (token, failure) = (again.token, null);
+            }
+        }
         if (token == null) return failure!;
 
+        var result = await SendAsync(token, ct).ConfigureAwait(false);
+        token = null;
+
+        // The server can revoke a token before its stated expiry: renew once and retry.
+        if (result.Failure == UsageFailure.Unauthorized && !refreshed &&
+            await ClaudeCliRefresher.TryRefreshAsync(ct).ConfigureAwait(false))
+        {
+            var again = ReadToken();
+            if (again.token != null) result = await SendAsync(again.token, ct).ConfigureAwait(false);
+        }
+        return result;
+    }
+
+    private static async Task<UsageResult> SendAsync(string? token, CancellationToken ct)
+    {
         HttpResponseMessage response;
         string body;
         try
@@ -102,29 +134,31 @@ public sealed class ClaudeUsageService
     }
 
     /// <summary>The access token from Claude Code's credentials file, or a failure explaining why there isn't one.</summary>
-    private static (string? token, UsageResult? failure) ReadToken()
+    private static (string? token, UsageResult? failure, DateTimeOffset? expires) ReadToken()
     {
         try
         {
             if (!File.Exists(CredentialsPath))
-                return (null, UsageResult.Fail(UsageFailure.NotSignedIn, "Claude Code isn't signed in on this PC"));
+                return (null, UsageResult.Fail(UsageFailure.NotSignedIn, "Claude Code isn't signed in on this PC"), null);
             using var doc = JsonDocument.Parse(File.ReadAllText(CredentialsPath));
             if (doc.RootElement.ValueKind != JsonValueKind.Object ||
                 !doc.RootElement.TryGetProperty("claudeAiOauth", out var oauth) || oauth.ValueKind != JsonValueKind.Object ||
                 !oauth.TryGetProperty("accessToken", out var tok) || tok.ValueKind != JsonValueKind.String ||
                 string.IsNullOrWhiteSpace(tok.GetString()))
-                return (null, UsageResult.Fail(UsageFailure.NotSignedIn, "No Claude sign-in found in Claude Code's credentials"));
+                return (null, UsageResult.Fail(UsageFailure.NotSignedIn, "No Claude sign-in found in Claude Code's credentials"), null);
+            DateTimeOffset? expires = null;
             if (oauth.TryGetProperty("expiresAt", out var exp) && exp.ValueKind == JsonValueKind.Number && exp.TryGetInt64(out long ms))
             {
-                var expires = ms > 100_000_000_000 ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : DateTimeOffset.FromUnixTimeSeconds(ms);
+                expires = ms > 100_000_000_000 ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : DateTimeOffset.FromUnixTimeSeconds(ms);
                 if (expires < DateTimeOffset.UtcNow)
-                    return (null, UsageResult.Fail(UsageFailure.Expired, "Sign-in expired. Run Claude Code once to refresh it"));
+                    return (null, UsageResult.Fail(UsageFailure.Expired, "Sign-in expired. Open Claude Code to sign in again"), expires);
             }
-            return (tok.GetString(), null);
+            return (tok.GetString(), null, expires);
         }
         catch (Exception)
         {
-            return (null, UsageResult.Fail(UsageFailure.NotSignedIn, "Couldn't read Claude Code's credentials"));
+            // Claude Code may be mid-write while renewing; the next poll will read it fine.
+            return (null, UsageResult.Fail(UsageFailure.NotSignedIn, "Couldn't read Claude Code's credentials"), null);
         }
     }
 

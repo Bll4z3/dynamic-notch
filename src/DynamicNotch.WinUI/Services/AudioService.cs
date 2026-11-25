@@ -24,6 +24,8 @@ public sealed class AudioService : IDisposable
     public event Action<VolumeState>? VolumeChanged;
     /// <summary>Raised on the UI thread when the microphone's mute changes.</summary>
     public event Action<bool>? MicMuteChanged;
+    /// <summary>Raised on the UI thread when Windows switches the default playback device (its friendly name).</summary>
+    public event Action<string>? OutputChanged;
 
     public bool IsAvailable => _render != null;
     public bool HasMicrophone => _capture != null;
@@ -37,6 +39,7 @@ public sealed class AudioService : IDisposable
             _enumerator.RegisterEndpointNotificationCallback(_deviceCallback);
             Attach(EDataFlow.Render);
             Attach(EDataFlow.Capture);
+            NoteOutput();
         }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Core Audio unavailable: {ex.Message}"); }
     }
@@ -151,7 +154,52 @@ public sealed class AudioService : IDisposable
         {
             Attach(flow);
             if (flow == EDataFlow.Capture) { bool m = MicMuted; Ui.Post(() => MicMuteChanged?.Invoke(m)); }
+            else if (DefaultOutputName() is { Length: > 0 } name && name != _lastOutput)
+            {
+                _lastOutput = name;
+                Ui.Post(() => OutputChanged?.Invoke(name));
+            }
         });
+    }
+
+    private string? _lastOutput;
+
+    /// <summary>The default playback device's friendly name ("Headphones (WH-1000XM5)"), or null.</summary>
+    private string? DefaultOutputName()
+    {
+        IntPtr store = IntPtr.Zero;
+        try
+        {
+            if (_enumerator == null) return null;
+            _enumerator.GetDefaultAudioEndpoint(EDataFlow.Render, ERole.Multimedia, out var device);
+            if (device.OpenPropertyStore(0 /* STGM_READ */, out store) != 0 || store == IntPtr.Zero) return null;
+            var ps = (IPropertyStore)Marshal.GetObjectForIUnknown(store);
+            var key = new PropertyKey { fmtid = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), pid = 14 }; // PKEY_Device_FriendlyName
+            var v = new PropVariant();
+            if (ps.GetValue(ref key, ref v) != 0) return null;
+            try { return v.vt == 31 /* VT_LPWSTR */ ? Marshal.PtrToStringUni(v.p) : null; }
+            finally { PropVariantClear(ref v); }
+        }
+        catch { return null; }
+        finally { if (store != IntPtr.Zero) Marshal.Release(store); }
+    }
+
+    /// <summary>Remembers the current output at start-up (so only a switch shows a pill).</summary>
+    private void NoteOutput() => _lastOutput = DefaultOutputName();
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PropVariant { public ushort vt; public ushort r1, r2, r3; public IntPtr p; public IntPtr p2; }
+
+    [DllImport("ole32.dll")] private static extern int PropVariantClear(ref PropVariant v);
+
+    [ComImport, Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IPropertyStore
+    {
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetAt(uint index, out PropertyKey key);
+        [PreserveSig] int GetValue(ref PropertyKey key, ref PropVariant value);
+        [PreserveSig] int SetValue(ref PropertyKey key, ref PropVariant value);
+        [PreserveSig] int Commit();
     }
 
     public void Dispose()

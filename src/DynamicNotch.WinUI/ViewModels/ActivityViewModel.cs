@@ -5,12 +5,13 @@ using Microsoft.UI.Dispatching;
 namespace DynamicNotch.ViewModels;
 
 /// <summary>The kinds of activity pill (see <see cref="ActivityViewModel.Priority"/> for which interrupts which).</summary>
-public enum ActivityKind { Update, Download, Volume, Brightness, CapsLock, Charging, LowBattery }
+public enum ActivityKind { Update, Download, Volume, Brightness, CapsLock, Charging, LowBattery, NextSong }
 
 /// <summary>
 /// One activity pill's content. The view picks its layout from <see cref="Kind"/>:
 /// Level is 0..1 (null = none / indeterminate); On is "muted" for volume, "on" for Caps Lock,
-/// "plugged in" for charging and "finished" for downloads.
+/// "plugged in" for charging and "finished" for downloads. NextSong carries the cover in <see cref="Artwork"/>
+/// (title = song, subtitle = artist).
 /// </summary>
 public sealed record Activity(
     ActivityKind Kind,
@@ -22,7 +23,8 @@ public sealed record Activity(
     bool Failed = false,
     Action? OnClick = null,
     Action<double>? OnSet = null,
-    string? Key = null);
+    string? Key = null,
+    Windows.Graphics.Imaging.SoftwareBitmap? Artwork = null);
 
 /// <summary>
 /// The ONE activity pill host's brain, shared by volume, brightness, Caps Lock, charging, downloads
@@ -61,7 +63,7 @@ public sealed class ActivityViewModel : ObservableObject
         ActivityKind.Charging => 5,
         ActivityKind.CapsLock => 4,
         ActivityKind.Volume or ActivityKind.Brightness => 3,
-        ActivityKind.Download => 2,
+        ActivityKind.Download or ActivityKind.NextSong => 2,
         _ => 1,
     };
 
@@ -75,6 +77,7 @@ public sealed class ActivityViewModel : ObservableObject
             ActivityKind.CapsLock => s.ShowCapsLockPill,
             ActivityKind.Charging or ActivityKind.LowBattery => s.ShowBatteryPills,
             ActivityKind.Download => s.ShowDownloadPill,
+            ActivityKind.NextSong => s.ShowNextSongPill,
             _ => true,
         };
     }
@@ -160,6 +163,7 @@ public sealed class ActivityViewModel : ObservableObject
         ActivityKind.CapsLock => Motion.ActivityCapsMs,
         ActivityKind.Download => a.On ? Motion.ActivityDownloadDoneMs : Motion.ActivityDownloadIdleMs,
         ActivityKind.Update => Motion.ActivityUpdateMs,
+        ActivityKind.NextSong => Motion.ActivityNextSongMs,
         _ => Motion.ActivityBatteryMs,
     };
 }

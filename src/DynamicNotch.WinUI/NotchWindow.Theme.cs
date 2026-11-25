@@ -51,6 +51,11 @@ public sealed partial class NotchWindow
             UpdateState();
         }
         if (parts.HasFlag(ThemeService.Part.Layout)) PositionWindow();
+        if (parts.HasFlag(ThemeService.Part.Lyrics))
+        {
+            Vm.Lyrics.ApplySettings(s); // text size, word-by-word, sync offset, closed-notch line: all live
+            ApplyTargets();
+        }
         if (parts.HasFlag(ThemeService.Part.Collapsed))
         {
             NotchRing.Opacity = s.ShowBatteryRing ? 1 : 0;
@@ -59,8 +64,15 @@ public sealed partial class NotchWindow
             StatusViewModel.ShowDateCollapsed = s.ShowDate;
             Vm.Status.Refresh();
         }
+        if (parts.HasFlag(ThemeService.Part.UsageRings)) ApplyUsageRings(animate);
         // Hover timings (Settings ▸ Customisation ▸ Behaviour) are read each time a timer starts
         // (HoverDelayMs / CollapseDelayMs below), so a change applies from the very next hover.
+        // "Click to open notch" is read on each hover / click; re-apply so the hover lift follows it at once.
+        if (parts.HasFlag(ThemeService.Part.Behaviour))
+        {
+            if (ClickToOpen) _expandTimer.Stop(); // a hover already counting down must not open it now
+            ApplyTargets();
+        }
     }
 
     /// <summary>How long the pointer rests on the notch before it opens (the user's setting).</summary>
@@ -68,6 +80,12 @@ public sealed partial class NotchWindow
 
     /// <summary>How long the notch stays open after the pointer leaves (the user's setting).</summary>
     private double CollapseDelayMs => _theme?.Current.CollapseDelayMs ?? Motion.HoverCollapseDelayMs;
+
+    /// <summary>Settings ▸ Customisation ▸ Music-reactive glow (on by default).</summary>
+    private bool MusicReactiveGlow => _theme?.Current.MusicReactiveGlow ?? true;
+
+    /// <summary>Settings ▸ Customisation ▸ Click to open notch: hovering no longer opens it (off by default).</summary>
+    private bool ClickToOpen => _theme?.Current.ClickToOpen == true;
 
     /// <summary>Glow brightness scaled by the Notch look settings (0 when the glow is off).</summary>
     private double GlowScale => _theme is { } t ? (t.Current.GlowEnabled ? t.Current.GlowIntensity : 0) : 1;

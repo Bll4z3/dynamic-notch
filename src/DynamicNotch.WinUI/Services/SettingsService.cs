@@ -36,6 +36,8 @@ public sealed class AppSettings
     public bool ShowBrightnessPill { get; set; } = true;
     public bool ShowCapsLockPill { get; set; } = true;
     public bool ShowDownloadPill { get; set; } = true;
+    /// <summary>"Next song": the cover, title and artist when the playing track changes.</summary>
+    public bool ShowNextSongPill { get; set; } = true;
     // (Charging and low battery use ShowBatteryPills.)
 
     // ---- Notifications + Quick actions page ----
@@ -64,8 +66,15 @@ public sealed class AppSettings
     public List<string> HeaderIconOrder { get; set; } = new();
     public List<string> HiddenHeaderIcons { get; set; } = new();
 
-    // ---- Spotify (Settings ▸ General): your own Spotify app's Client ID, for the Like button ----
+    // ---- Lyrics: the panel stays open (or closed) between songs and sessions ----
+    public bool LyricsPanelOpen { get; set; }
+
+    // ---- Spotify (Settings ▸ General): your own Spotify app's Client ID, for the Like button and the playlist panel ----
     public string? SpotifyClientId { get; set; }
+    /// <summary>What the notch's playlist panel lists: "recent" (recently played), "selected" (your picks) or "both" (picks first).</summary>
+    public string SpotifyPlaylistSource { get; set; } = "recent";
+    /// <summary>The playlists picked in Settings ▸ General ▸ Notch playlists (name and cover kept so the panel shows them at once).</summary>
+    public List<SpotifyPinnedPlaylist> SpotifyPinnedPlaylists { get; set; } = new();
 
     // ---- Command palette (Settings ▸ Command Palette) ----
     public PaletteSettings Palette { get; set; } = new();
@@ -75,6 +84,15 @@ public sealed class AppSettings
     public DateTimeOffset? LastUpdateCheck { get; set; }
     /// <summary>The newest version already announced with a pill (each new version is announced once).</summary>
     public string? LastAnnouncedVersion { get; set; }
+}
+
+/// <summary>A playlist picked for the notch's playlist panel.</summary>
+public sealed class SpotifyPinnedPlaylist
+{
+    public string Id { get; set; } = "";
+    public string Uri { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? ImageUrl { get; set; }
 }
 
 /// <summary>Settings and app data live in %LocalAppData%\DynamicNotch (virtualised per-package under MSIX).</summary>
@@ -111,6 +129,8 @@ public sealed class SettingsService
         Current.Palette.Disabled ??= new();
         Current.HeaderIconOrder ??= new();
         Current.HiddenHeaderIcons ??= new();
+        Current.SpotifyPinnedPlaylists = (Current.SpotifyPinnedPlaylists ?? new()).Where(p => p != null && !string.IsNullOrEmpty(p.Id)).ToList();
+        if (Current.SpotifyPlaylistSource is not ("recent" or "selected" or "both")) Current.SpotifyPlaylistSource = "recent";
         // A file from an older version: unknown keys are ignored on load; rewrite it once so they're gone for good.
         if (legacy) Save();
     }

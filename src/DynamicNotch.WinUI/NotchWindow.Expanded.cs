@@ -44,8 +44,12 @@ public sealed partial class NotchWindow
             page: () => -1, allowed: () => Vm.Overlay == ViewModels.NotchOverlay.None);
         AddMatched(CollapsedTime, _frame.HeaderTime, edge: 0, parentShifted: false, want: 0,
             page: () => -1, allowed: () => Vm.Overlay == ViewModels.NotchOverlay.None);
-        AddMatched(MiniArt, _frame.Music.ArtElement, edge: -1, parentShifted: true, want: 1,
-            page: () => Vm.Pages.IndexOf(PageId.Music), allowed: () => Vm.Music.IsPlaying && !Vm.MinimalNotch && !CompactTimerShown, pageScrolled: true);
+        // The album art: a shared-element morph on its own spring ("ArtFly"), with its corner radius and shadow
+        // following (MusicPage.BindArtFlight). Its stagger block is held meanwhile, so it's visible from the first frame.
+        var art = AddMatched(MiniArt, _frame.Music.ArtElement, edge: -1, parentShifted: true, want: 1,
+            page: () => Vm.Pages.IndexOf(PageId.Music), allowed: () => ArtFlightAllowed, pageScrolled: true, flight: "ArtFly");
+        _frame.Music.BindArtFlight(art.M);
+        _frame.Music.ArtFlightActive = () => ArtFlightAllowed && Vm.IsMusicPage;
         UpdateMatchedFlags();
     }
 
@@ -53,8 +57,11 @@ public sealed partial class NotchWindow
     /// <param name="parentShifted">True when the collapsed element's parent already carries the right-edge shift.</param>
     /// <param name="want">1 = the pair flies only near <paramref name="page"/>; 0 = it flies except near it.</param>
     /// <param name="pageScrolled">True when the expanded element sits in the pager (moves with the page spring).</param>
-    private void AddMatched(FrameworkElement collapsed, FrameworkElement expanded, int edge, bool parentShifted, int want,
-                            Func<int> page, Func<bool> allowed, bool pageScrolled = false)
+    /// <param name="flight">A notch property (0..1) that drives this pair's flight instead of the height's progress: its
+    /// own spring, so the pair moves with momentum but never overshoots, and the two cross-fade within the first
+    /// moment of the flight (a true shared element) instead of across the middle of the morph.</param>
+    private Matched AddMatched(FrameworkElement collapsed, FrameworkElement expanded, int edge, bool parentShifted, int want,
+                            Func<int> page, Func<bool> allowed, bool pageScrolled = false, string? flight = null)
     {
         var c = _shape.Compositor;
         var m = c.CreatePropertySet();
@@ -74,7 +81,7 @@ public sealed partial class NotchWindow
         Chain(m, "es", $"({CPW} - N.W) / 2");
         Chain(m, "onPage", "M.Near >= 0 ? (Abs(N.Page - M.Near) < 0.5 ? 1 : 0) : 0");
         Chain(m, "act", "M.Active * (M.Want * M.onPage + (1 - M.Want) * (1 - M.onPage))");
-        Chain(m, "t", "M.act * M.p + (1 - M.act)"); // inactive: the expanded element rests in place
+        Chain(m, "t", flight != null ? $"M.act * Clamp(N.{flight}, 0, 1) + (1 - M.act)" : "M.act * M.p + (1 - M.act)"); // inactive: the expanded element rests in place
         Chain(m, "acx", $"M.ax + M.aw / 2 + {edge} * M.es");
         Chain(m, "acy", "M.ay + M.ah / 2");
         Chain(m, "bcx", pageScrolled ? "M.bx + M.bw / 2 - N.Page * N.Slot" : "M.bx + M.bw / 2");
@@ -89,21 +96,29 @@ public sealed partial class NotchWindow
         string cs = "(M.act * M.ch / M.ah + (1 - M.act))";
         Bind(collapsed, "Scale", $"Vector3({cs}, {cs}, 1)", m, translation: false);
         Bind(collapsed, "Translation", $"Vector3(M.act * M.ccx + (1 - M.act) * M.acx - (M.ax + M.aw / 2){parent}, M.act * (M.ccy - M.acy), 0)", m, translation: true);
-        Bind(collapsed, "Opacity", $"M.act * (1 - {Anim.SmoothStep(0, 0.45, "M.p")}) + (1 - M.act)", m, translation: false);
+        Bind(collapsed, "Opacity", flight != null
+            ? $"M.act * (1 - {Anim.SmoothStep(0.04, 0.16, "M.t")}) + (1 - M.act)"
+            : $"M.act * (1 - {Anim.SmoothStep(0, 0.45, "M.p")}) + (1 - M.act)", m, translation: false);
 
         // Expanded element: starts at the collapsed element's spot and size, settles in place.
         Motions.CentreOrigin(expanded);
         string bs = "(M.act * M.ch / M.bh + (1 - M.act))";
         Bind(expanded, "Scale", $"Vector3({bs}, {bs}, 1)", m, translation: false);
         Bind(expanded, "Translation", "Vector3(M.act * (M.ccx - M.bcx), M.act * (M.ccy - M.bcy), 0)", m, translation: true);
-        Bind(expanded, "Opacity", Anim.SmoothStep(Motion.MatchedFadeFrom, Motion.MatchedFadeTo, "M.p"), m, translation: false);
+        Bind(expanded, "Opacity", flight != null
+            ? $"M.act * {Anim.SmoothStep(0, 0.07, "M.t")} + (1 - M.act) * {Anim.SmoothStep(Motion.MatchedFadeFrom, Motion.MatchedFadeTo, "M.p")}"
+            : Anim.SmoothStep(Motion.MatchedFadeFrom, Motion.MatchedFadeTo, "M.p"), m, translation: false);
 
         // Re-measure whenever either side's layout changes (e.g. the clock text width).
         collapsed.SizeChanged += (_, _) => Measure(pair);
         expanded.SizeChanged += (_, _) => Measure(pair);
         collapsed.Loaded += (_, _) => Measure(pair);
         expanded.Loaded += (_, _) => Measure(pair);
+        return pair;
     }
+
+    /// <summary>The album art flies between the closed notch's mini art and the media player (music playing, mini art shown).</summary>
+    private bool ArtFlightAllowed => Vm.Music.IsPlaying && !Vm.MinimalNotch && !CompactTimerShown && !_lyricOnClosed;
 
     private void Chain(CompositionPropertySet m, string name, string expression)
     {
@@ -158,6 +173,17 @@ public sealed partial class NotchWindow
         var album = AlbumColorService.Extract(Vm.Music.Artwork);
         _albumColor = Vm.Music.Artwork != null ? album : null;
         _frame.Glow.SetColor(GlowColorFor(album), animate);
+        // The reactive glow: the cover itself (blurred) and its palette; with "Glow colour: Accent" (or no cover) the
+        // accent's palette and no cover layer.
+        bool accent = _theme?.Current.GlowSource == "accent";
+        var art = accent ? null : Vm.Music.Artwork;
+        var palette = (art != null ? AlbumColorService.ExtractGlowPalette(art) : null)
+            ?? AlbumColorService.PaletteAround(accent || art == null ? _theme?.ChosenAccent() ?? Theme.AccentColor : album);
+        _frame.Glow.SetArtwork(art, palette, animate);
+        // The lyrics light up in the cover's colours too (the album's palette, even when the glow follows the accent).
+        var lyricPalette = Vm.Music.Artwork != null ? AlbumColorService.ExtractGlowPalette(Vm.Music.Artwork) ?? AlbumColorService.PaletteAround(album) : null;
+        _frame.Music.LyricsView.SetPalette(lyricPalette);
+        _collapsedLyric?.SetPalette(lyricPalette);
         _theme?.SetAlbumColor(_albumColor, _state == NotchState.Expanded && Vm.IsMusicPage, Vm.Music.IsPlaying);
     }
 
@@ -169,6 +195,51 @@ public sealed partial class NotchWindow
         double level = !open || Vm.Pages.IndexOf(PageId.Music) < 0 ? 0 : playing ? Theme.GlowMaxOpacity : Theme.GlowPausedOpacity;
         _frame.Glow.SetLevel(level * GlowScale);
         _frame.Glow.SetPulsing(open && playing && GlowScale > 0 && !Motion.LowPower);
+        if (_theme?.Current is { } s)
+        {
+            _frame.Glow.Configure(s.GlowStyle, s.GlowKick, s.GlowBass, s.GlowSnare, s.GlowVocal, s.GlowSparkles, s.GlowDrops, s.GlowDebug);
+            if (_reactor != null) _reactor.Sensitivity = (float)s.BeatSensitivity;
+        }
+        UpdateMusicReactive(open && Vm.IsMusicPage && GlowScale > 0, playing);
+    }
+
+    // ---- Music-reactive glow ---------------------------------------------------------------------------------
+    private Services.MusicReactiveService? _reactor;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _reactorStop;
+    private bool _reactWanted;
+
+    /// <summary>
+    /// The reactive scene shows while the media player page is open with the glow and the setting on (not in Low power
+    /// or with animations off); it breathes on its own while paused. Audio is only captured while music also plays.
+    /// Capture stops a moment after that ends (a quick page flick doesn't restart the device), and the scene fades back
+    /// to the static glow when it's no longer wanted.
+    /// </summary>
+    private void UpdateMusicReactive(bool visible, bool playing)
+    {
+        bool scene = visible && MusicReactiveGlow && !Motion.LowPower && Anim.Enabled;
+        bool want = scene && playing;
+        // Lyrics on screen also listen (sung syllables refine estimated word timings, held notes pulse), with the same
+        // switch as the music glow's capture.
+        bool lyrics = _collapsedLyric != null && LyricsOnScreen && playing && MusicReactiveGlow && !Motion.LowPower;
+        bool capture = want || lyrics;
+        if (capture != _reactWanted)
+            Services.MusicReactiveService.Log($"reactive {(capture ? "ON" : "off")}: scene={scene} lyrics={lyrics} state={_state} musicPage={Vm.IsMusicPage} playing={Vm.Music.IsPlaying} glowScale={GlowScale} setting={MusicReactiveGlow} lowPower={Motion.LowPower} animations={Anim.Enabled}");
+        _reactWanted = capture;
+        _frame.Glow.SetReactive(scene, want);
+        if (capture)
+        {
+            _reactorStop?.Stop();
+            _reactor ??= new Services.MusicReactiveService();
+            _reactor.Sensitivity = (float)(_theme?.Current.BeatSensitivity ?? 0.5);
+            _reactor.Start();
+            _frame.Glow.Analyser = _reactor; // the glow reads its latest frame on each displayed frame
+            Vm.Lyrics.Analyser = _reactor;
+        }
+        else if (_reactor?.IsRunning == true)
+        {
+            _reactorStop ??= OneShot(DispatcherQueue, 1500, () => { _reactor?.Stop(); Vm.Lyrics.Analyser = null; });
+            if (!_reactorStop.IsRunning) _reactorStop.Start();
+        }
     }
 
     /// <summary>Profile mode: confirm the music details column is centred on the cover (logged to frames.log).</summary>

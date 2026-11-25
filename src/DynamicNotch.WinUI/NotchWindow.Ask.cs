@@ -37,6 +37,7 @@ public sealed partial class NotchWindow
         // Esc while the notch owns focus (keys reach XAML only then; the hook handles it otherwise).
         Root.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, e) =>
         {
+            if (e.Key is VirtualKey.Left or VirtualKey.Right && _hasFocus) { StepPageFromFocus(e); return; }
             if (e.Key != VirtualKey.Escape || !_hasFocus) return;
             if (EscapeClosesPopover()) { e.Handled = true; return; }
             if (Vm.Overlay != NotchOverlay.None) CloseOverlay(collapse: Vm.IsPaletteOpen);
@@ -56,6 +57,19 @@ public sealed partial class NotchWindow
         if (e.PropertyName != nameof(AskViewModel.IsBusy) || Vm.Ask.IsBusy) return;
         // The answer finished: if nobody is looking, the notch may close again as usual.
         if (!_pinned && !_hasFocus && !_mouseOver) ScheduleCollapseCheck();
+    }
+
+    /// <summary>
+    /// ← / → while the notch owns focus (the keyboard hook steps aside then, so nothing else turns pages): they
+    /// move the caret in a box with text, otherwise they switch pages, so they never get stuck on Ask / the palette.
+    /// </summary>
+    private void StepPageFromFocus(KeyRoutedEventArgs e)
+    {
+        if (Vm.Overlay != NotchOverlay.None || _state != NotchState.Expanded || Root.XamlRoot == null) return;
+        if (FocusManager.GetFocusedElement(Root.XamlRoot) is Microsoft.UI.Xaml.Controls.TextBox { Text.Length: > 0 }) return;
+        int before = Vm.PageIndex;
+        Vm.PageIndex += e.Key == VirtualKey.Left ? -1 : 1;
+        if (Vm.PageIndex != before) e.Handled = true;
     }
 
     // ---- Hotkey ------------------------------------------------------------------------------------
@@ -103,6 +117,7 @@ public sealed partial class NotchWindow
         if (!_hasFocus) return;
         _hasFocus = false;
         _frame.Ask.ClearFocus();
+        _frame.Music.SpotifyPanel.ClearFocus();
         if (_hwnd != IntPtr.Zero) Native.SetExStyle(_hwnd, Native.WS_EX_NOACTIVATE, 0);
         var prev = _previousForeground;
         _previousForeground = IntPtr.Zero;

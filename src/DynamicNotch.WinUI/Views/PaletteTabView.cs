@@ -73,6 +73,18 @@ internal sealed class PaletteTabView : Grid
         stack.Children.Add(SettingsUi.Card(hk));
         ShowHotkey();
 
+        // ---- Look ----
+        stack.Children.Add(Section("Look"));
+        var glow = new ValueSlider("Glow intensity", 0, 200, 5, v => $"{v:0}%", "The soft glow along the top of the palette that reacts as you type");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(glow, "Glow intensity");
+        glow.SetValue(_settings.Current.Palette.GlowIntensity * 100, animate: false);
+        glow.Changed += (v, final) =>
+        {
+            void Set(AppSettings s) => s.Palette.GlowIntensity = Math.Round(v / 100, 2);
+            if (final) _settings.Update(Set); else _settings.UpdateDeferred(Set); // live while dragging, saved when done
+        };
+        stack.Children.Add(SettingsUi.Card(glow));
+
         // ---- Functions ----
         stack.Children.Add(Section("What it can do"));
         var fns = new StackPanel();

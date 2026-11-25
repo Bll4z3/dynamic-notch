@@ -63,21 +63,28 @@ public sealed class ExpandedFrame : Grid
         _dateWrap.Margin = Theme.GapLeftS2;
         _dateWrap.VerticalAlignment = VerticalAlignment.Center;
         left.Children.Add(HeaderRing);
+        // Claude usage rings (Settings ▸ Customisation ▸ Claude usage rings), right of the battery ring, same size.
+        HeaderFiveHour = new UsageRing(UsageRing.Kind.FiveHour, Theme.HeaderRingSize, Theme.HeaderRingThickness) { Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+        HeaderWeekly = new UsageRing(UsageRing.Kind.Weekly, Theme.HeaderRingSize, Theme.HeaderRingThickness) { Margin = Theme.GapRightS2, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+        left.Children.Add(HeaderFiveHour);
+        left.Children.Add(HeaderWeekly);
         left.Children.Add(HeaderTime);
         left.Children.Add(_dateWrap);
         _header.Children.Add(left);
         // Right: the header icons, in the order chosen in Settings ▸ Layout (Settings always among them). Each
         // feature has one identical icon button; Ask and the palette slide in over the pages, the rest open in
         // the header pop-up. The bell carries a dot while there's unread. Reordering slides them into place.
-        _gear = new IconButton(26, Theme.IconSmall) { Icon = Icons.Settings, Foreground = Theme.SecondaryText, Command = vm.OpenSettingsCommand, Tooltip = "Settings" };
+        _gear = new IconButton(26, Theme.IconSmall) { Icon = Icons.Settings, Command = vm.OpenSettingsCommand, Tooltip = "Settings" };
         _iconViews[PageRegistry.SettingsId] = _gear;
+        AddIconLight(_gear);
         Motions.SlideIntoPlace(_gear);
         foreach (var def in PageRegistry.All)
         {
             var id = def.Id;
-            var button = new IconButton(26, Theme.IconSmall) { Icon = def.Icon, Foreground = Theme.SecondaryText, Tooltip = def.Name };
+            var button = new IconButton(26, Theme.IconSmall) { Icon = def.Icon, Tooltip = def.Name };
             button.Click += () => FeatureRequested?.Invoke(id);
             _iconButtons[id] = button;
+            AddIconLight(button);
             FrameworkElement host = button;
             if (id == PageId.Notifications)
             {
@@ -110,7 +117,8 @@ public sealed class ExpandedFrame : Grid
         _content.Children.Add(_viewport);
         _viewport.SizeChanged += (_, e) =>
         {
-            _viewportClip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
+            // Room below for the media player's lyrics layout and Spotify panel (the notch grows by that much; the body clip still applies).
+            _viewportClip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height + Math.Max(Theme.LyricsExtraHeight, Theme.SpotifyPanelHeight));
             _n.InsertScalar("Slot", (float)e.NewSize.Width);
             LayoutPages();
         };
@@ -131,12 +139,26 @@ public sealed class ExpandedFrame : Grid
         _footer.Children.Add(_footerInner);
         _content.Children.Add(_footer);
         // The footer keeps a constant distance from the notch's bottom edge as the height changes
-        // between the music page and the taller pages (compositor transform only).
-        var shift = Anim.Expr(notch.Compositor, $"Vector3(0, Clamp(N.H - {Anim.F(Theme.ExpandedHeight)}, {Anim.F(Theme.MusicExpandedHeight - Theme.ExpandedHeight)}, 0), 0)", ("N", notch));
+        // between the music page, the taller pages and the media player's lyrics layout (compositor transform only).
+        var shift = Anim.Expr(notch.Compositor, $"Vector3(0, Clamp(N.H - {Anim.F(Theme.ExpandedHeight)}, {Anim.F(Theme.MusicExpandedHeight - Theme.ExpandedHeight)}, {Anim.F(Math.Max(Theme.LyricsExpandedHeight, Theme.SpotifyExpandedHeight) - Theme.ExpandedHeight)}), 0)", ("N", notch));
         Anim.VisualOf(_footer, translation: true).StartAnimation("Translation", shift);
 
-        Music = new MusicPage(vm.Music, vm.SpotifyLike);
+        Music = new MusicPage(vm.Music, vm.SpotifyLike, vm.Lyrics, vm.SpotifyLibrary, notch.Compositor);
         _pageViews[PageId.Music] = Music;
+        // The glow places its main blob and shockwaves behind the art and its scrim behind the text column (and, in the
+        // lyrics layout, its vocal ribbon behind the current line); while the layout morphs, it glides along.
+        Music.ArtElement.SizeChanged += (_, _) => UpdateGlowLayout();
+        Music.DetailsElement.SizeChanged += (_, _) => UpdateGlowLayout();
+        Music.SizeChanged += (_, _) => UpdateGlowLayout();
+        Music.LyricsView.SizeChanged += (_, _) => UpdateGlowLayout();
+        Music.LayoutChanged += animate =>
+        {
+            if (animate) _glowGlideUntil = Environment.TickCount64 + 750;
+            Glow.SetLyricsLayout(Music.IsLyricsLayout, Theme.LyricsExtraHeight, animate);
+            UpdateGlowLayout();
+            LayoutChanged?.Invoke();
+        };
+        Glow.SetLyricsLayout(Music.IsLyricsLayout, Theme.LyricsExtraHeight, animate: false);
         Shelf = new ClipboardShelfPage(vm.Clipboard, vm.Shelf);
         _pageViews[PageId.Clipboard] = Shelf;
         Usage = new UsagePage(vm.Usage);
@@ -155,11 +177,16 @@ public sealed class ExpandedFrame : Grid
         Ask = new AskPage(vm.Ask, vm.Status, notch);
         Ask.CloseRequested += () => OverlayRequested?.Invoke(NotchOverlay.None);
         _pageViews[PageId.Ask] = new Grid();
-        AddOverlayLayer(_askLayer, Ask, "AskOv", "AskIdx");
+        _n.InsertScalar("AskOv", 0);
+        _n.InsertScalar("PalOv", 0);
+        AddOverlayLayer(_askLayer, Ask, "AskOv", "AskIdx", other: "PalOv");
         Palette = new CommandPaletteView(vm.Palette, notch);
         Palette.CloseRequested += () => OverlayRequested?.Invoke(NotchOverlay.None);
         _pageViews[PageId.Palette] = new Grid();
-        AddOverlayLayer(_paletteLayer, Palette, "PalOv", "PalIdx");
+        AddOverlayLayer(_paletteLayer, Palette, "PalOv", "PalIdx", other: "AskOv");
+        // Ask / the palette as a page: their own page dots switch pages like the footer's.
+        Ask.Dots.PageClicked += i => _vm.PageIndex = i;
+        Palette.Dots.PageClicked += i => _vm.PageIndex = i;
         string Near(string idx) => $"(N.{idx} >= 0 ? 1 - Clamp(Abs(N.Page - N.{idx}), 0, 1) : 0)";
         Anim.VisualOf(_content).StartAnimation("Opacity", Anim.Expr(notch.Compositor,
             $"1 - Clamp(Max(Max(N.AskOv, N.PalOv), Max({Near("AskIdx")}, {Near("PalIdx")})), 0, 1)", ("N", notch)));
@@ -167,7 +194,14 @@ public sealed class ExpandedFrame : Grid
 
         Stagger.Add(_dateWrap, 0);
         Stagger.Add(_gearWrap, 0);
-        foreach (var (el, order) in Music.StaggerBlocks) Stagger.Add(el, order);
+        // The media player's blocks layer in after the art (fade, rise and a slight grow) and leave in reverse; the art
+        // itself is held while it takes the shared-element flight from the closed notch.
+        foreach (var (el, order) in Music.StaggerBlocks)
+        {
+            bool art = ReferenceEquals(el, Music.ArtStaggerElement);
+            Stagger.Add(el, order, scaleFrom: art || ReferenceEquals(el, Music.LyricsHostElement) ? 1 : Motion.MusicStaggerScale,
+                        hold: art ? () => Music.ArtFlightActive?.Invoke() == true : null, layered: true);
+        }
         foreach (var (el, order) in Shelf.StaggerBlocks) Stagger.Add(el, order);
         foreach (var (el, order) in Usage.StaggerBlocks) Stagger.Add(el, order);
         foreach (var (el, order) in FocusTimer.StaggerBlocks) Stagger.Add(el, order);
@@ -192,6 +226,13 @@ public sealed class ExpandedFrame : Grid
         vm.Hub.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(HubViewModel.UnreadCount)) UpdateBadge(); };
         UpdateBadge();
 
+        // The music glow's debug overlay (Settings ▸ Customisation ▸ Glow debug overlay) and the art's kick bump.
+        // (Narrow, over the album art: it never covers the title or controls.)
+        var debug = new GlowDebugOverlay { Margin = new Thickness(6, Theme.ExpandedPadding.Top + Theme.HeaderHeight + 6, 0, 0), MaxWidth = 172 };
+        Children.Add(debug);
+        Glow.DebugOverlay = debug;
+        Music.BindArtBump(Glow.Props);
+
         // Preview layer on top of everything in the open notch.
         var previewLayer = new Canvas { IsHitTestVisible = false };
         previewLayer.Children.Add(Preview);
@@ -205,6 +246,8 @@ public sealed class ExpandedFrame : Grid
     }
 
     public BatteryRing HeaderRing { get; }
+    public UsageRing HeaderFiveHour { get; }
+    public UsageRing HeaderWeekly { get; }
     public CrossfadeText HeaderTime { get; }
     public MusicPage Music { get; }
     public ClipboardShelfPage Shelf { get; }
@@ -217,6 +260,26 @@ public sealed class ExpandedFrame : Grid
     public QuickActionsPanel QuickActions { get; }
     public AskPage Ask { get; }
     public CommandPaletteView Palette { get; }
+
+    /// <summary>
+    /// The usage rings are about to appear / disappear in the header: for a moment, the time and date glide to their new
+    /// spots instead of jumping (only then, so the date doesn't slide every time the clock's width changes).
+    /// </summary>
+    public void SlideHeaderOnce()
+    {
+        var els = new UIElement[] { HeaderTime, _dateWrap, HeaderFiveHour, HeaderWeekly };
+        foreach (var el in els) Motions.SlideIntoPlace(el, 320);
+        if (_slideEnd == null)
+        {
+            _slideEnd = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            _slideEnd.IsRepeating = false;
+            _slideEnd.Interval = TimeSpan.FromMilliseconds(700);
+            _slideEnd.Tick += (t, _) => { t.Stop(); foreach (var el in els) Anim.VisualOf(el).ImplicitAnimations = null; };
+        }
+        _slideEnd.Stop();
+        _slideEnd.Start();
+    }
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _slideEnd;
 
     /// <summary>A header icon was clicked (the window opens the feature as a pop-up or an overlay).</summary>
     public event Action<PageId>? FeatureRequested;
@@ -255,24 +318,63 @@ public sealed class ExpandedFrame : Grid
         foreach (var (id, b) in _iconButtons)
         {
             bool on = Popup.Current == id || id == PageId.Ask && _overlay == NotchOverlay.Ask || id == PageId.Palette && _overlay == NotchOverlay.Palette;
-            b.Foreground = on ? Theme.PrimaryText : Theme.SecondaryText;
-            b.Backing = on ? Theme.CardHoverBrush : null;
+            if (_lights.TryGetValue(b, out var l)) { l.Selected = on; l.Apply(); }
         }
     }
 
-    private void AddOverlayLayer(Grid layer, FrameworkElement view, string key, string idx)
+    // ---- Header icon states: no grey box; the glyph itself lights up -----------------------------------------------
+    private readonly Dictionary<IconButton, IconLight> _lights = new();
+
+    /// <summary>
+    /// A header icon's look: dimmed at rest, full brightness on hover, and while its feature is open it stays bright
+    /// and a little larger (a soft spring). No hover or selected fill behind it, only the press squash.
+    /// </summary>
+    private sealed class IconLight
+    {
+        public required CompSpring Lit, Grow;
+        public bool Hovered, Selected;
+        public void Apply()
+        {
+            Lit.SetTarget(Hovered || Selected ? 1 : 0, Motion.Hover);
+            Grow.SetTarget(Selected ? 1 : 0, Motion.Pop);
+        }
+    }
+
+    private void AddIconLight(IconButton b)
+    {
+        b.NoFill = true;
+        b.Foreground = Theme.PrimaryText;
+        var icon = b.IconElement;
+        var v = Anim.VisualOf(icon);
+        var c = v.Compositor;
+        var (lit, ls) = Motions.Value(c, Motion.Hover, 0);
+        var (grow, gs) = Motions.Value(c, Motion.Pop, 0);
+        Motions.CentreOrigin(icon);
+        // Rest ≈ the secondary text grey (A1 on F5); lit = full white.
+        v.StartAnimation("Opacity", Anim.Expr(c, "0.64 + 0.36 * Clamp(l.v, 0, 1)", ("l", ls)));
+        v.StartAnimation("Scale", Anim.Expr(c, "Vector3(1 + 0.12 * g.v, 1 + 0.12 * g.v, 1)", ("g", gs)));
+        var light = new IconLight { Lit = lit, Grow = grow };
+        _lights[b] = light;
+        b.PointerEntered += (_, _) => { light.Hovered = true; light.Apply(); };
+        b.PointerExited += (_, _) => { light.Hovered = false; light.Apply(); };
+        b.PointerCanceled += (_, _) => { light.Hovered = false; light.Apply(); };
+    }
+
+    /// <param name="other">The other overlay's spring: while it slides in over this layer (e.g. the palette opened
+    /// on the Ask page), this one fades out underneath so the two never show at once.</param>
+    private void AddOverlayLayer(Grid layer, FrameworkElement view, string key, string idx, string other)
     {
         layer.Width = Theme.ExpandedWidth;
         layer.Height = Theme.ExpandedMaxHeight;
         layer.VerticalAlignment = VerticalAlignment.Top;
         layer.Children.Add(view);
         Children.Add(layer);
-        _n.InsertScalar(key, 0);
         _n.InsertScalar(idx, -100);
         var v = Anim.VisualOf(layer, translation: true);
         v.StartAnimation("Translation", Anim.Expr(_n.Compositor,
             $"Vector3(N.{idx} >= 0 ? (N.{idx} - N.Page) * N.Slot : (1 - Clamp(N.{key}, 0, 1)) * {Anim.F(Motion.HeaderPopupSlide)}, 0, 0)", ("N", _n)));
-        v.StartAnimation("Opacity", Anim.Expr(_n.Compositor, $"N.{idx} >= 0 ? 1 : Clamp(N.{key} * 1.3, 0, 1)", ("N", _n)));
+        v.StartAnimation("Opacity", Anim.Expr(_n.Compositor,
+            $"(N.{idx} >= 0 ? 1 : Clamp(N.{key} * 1.3, 0, 1)) * (1 - Clamp(N.{other} * 1.6, 0, 1))", ("N", _n)));
     }
 
     /// <summary>
@@ -356,8 +458,39 @@ public sealed class ExpandedFrame : Grid
             : Theme.ExpandedContentHeight - Theme.HeaderHeight - Theme.S2 - Theme.FooterHeight;
         foreach (var page in _strip.Children.OfType<FrameworkElement>()) { page.Width = w; page.Height = h; page.VerticalAlignment = VerticalAlignment.Top; }
         // The music page is shorter: its content centres in the space above the raised footer.
-        if (_vm.Pages.IsEnabled(PageId.Music)) Music.Height = Math.Max(0, h - (Theme.ExpandedHeight - Theme.MusicExpandedHeight));
+        if (_vm.Pages.IsEnabled(PageId.Music)) Music.BaseHeight = Math.Max(0, h - (Theme.ExpandedHeight - Theme.MusicExpandedHeight));
     }
+
+    /// <summary>
+    /// The music page's art and text column in glow-host DIPs, at the page's resting spot (measured inside the page,
+    /// then offset by the viewport: the pager's slide is a compositor transform, so it isn't part of layout).
+    /// </summary>
+    private void UpdateGlowLayout()
+    {
+        if (Music.XamlRoot == null || _viewport.XamlRoot == null) return;
+        try
+        {
+            var origin = _viewport.TransformToVisual(_glowHost).TransformPoint(new Windows.Foundation.Point(0, 0));
+            Windows.Foundation.Rect Rect(FrameworkElement el)
+            {
+                var p = el.TransformToVisual(Music).TransformPoint(new Windows.Foundation.Point(0, 0));
+                return new Windows.Foundation.Rect(origin.X + p.X, origin.Y + p.Y, el.ActualWidth, el.ActualHeight);
+            }
+            Windows.Foundation.Rect? lyrics = null, focus = null;
+            if (Music.IsLyricsLayout)
+            {
+                lyrics = Rect(Music.LyricsView);
+                if (Music.LyricsFocus is { } f) focus = new Windows.Foundation.Rect(origin.X + f.X, origin.Y + f.Y, f.Width, f.Height);
+            }
+            Glow.SetLayout(Rect(Music.ArtElement), Rect(Music.DetailsElement), lyrics, focus, animate: Environment.TickCount64 < _glowGlideUntil);
+        }
+        catch { /* not in the tree yet */ }
+    }
+
+    private long _glowGlideUntil;
+
+    /// <summary>The media player's layout changed (lyrics opened / closed): the window re-sizes the notch.</summary>
+    public event Action? LayoutChanged;
 
     private void OnStatusChanged(object? sender, PropertyChangedEventArgs e)
     {

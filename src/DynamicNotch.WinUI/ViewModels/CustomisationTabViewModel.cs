@@ -17,6 +17,7 @@ public sealed class SettingsExport
     public bool ShowBrightnessPill { get; set; } = true;
     public bool ShowCapsLockPill { get; set; } = true;
     public bool ShowDownloadPill { get; set; } = true;
+    public bool ShowNextSongPill { get; set; } = true;
     public bool ShowBatteryPills { get; set; } = true;
     public bool ShowDevicePills { get; set; } = true;
     public bool ShowNetworkPills { get; set; } = true;
@@ -76,7 +77,7 @@ public sealed class CustomisationTabViewModel
             FontId = s.FontId,
             MinimalNotch = s.MinimalNotch, HideWhenFullscreen = s.HideWhenFullscreen,
             ShowVolumePill = s.ShowVolumePill, ShowBrightnessPill = s.ShowBrightnessPill, ShowCapsLockPill = s.ShowCapsLockPill,
-            ShowDownloadPill = s.ShowDownloadPill, ShowBatteryPills = s.ShowBatteryPills, ShowDevicePills = s.ShowDevicePills,
+            ShowDownloadPill = s.ShowDownloadPill, ShowNextSongPill = s.ShowNextSongPill, ShowBatteryPills = s.ShowBatteryPills, ShowDevicePills = s.ShowDevicePills,
             ShowNetworkPills = s.ShowNetworkPills, ShowAppNotifications = s.ShowAppNotifications,
         };
         return JsonSerializer.Serialize(e, Json);
@@ -98,7 +99,7 @@ public sealed class CustomisationTabViewModel
         {
             s.HideWhenFullscreen = e.HideWhenFullscreen;
             s.ShowVolumePill = e.ShowVolumePill; s.ShowBrightnessPill = e.ShowBrightnessPill; s.ShowCapsLockPill = e.ShowCapsLockPill;
-            s.ShowDownloadPill = e.ShowDownloadPill; s.ShowBatteryPills = e.ShowBatteryPills; s.ShowDevicePills = e.ShowDevicePills;
+            s.ShowDownloadPill = e.ShowDownloadPill; s.ShowNextSongPill = e.ShowNextSongPill; s.ShowBatteryPills = e.ShowBatteryPills; s.ShowDevicePills = e.ShowDevicePills;
             s.ShowNetworkPills = e.ShowNetworkPills; s.ShowAppNotifications = e.ShowAppNotifications;
         });
         return null;

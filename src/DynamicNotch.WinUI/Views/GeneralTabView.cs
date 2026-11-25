@@ -21,7 +21,16 @@ namespace DynamicNotch.Views;
 /// </summary>
 internal sealed class GeneralTabView : Grid
 {
-    public GeneralTabView(GeneralTabViewModel vm)
+    private readonly ApiKeyTabView _apiKey;
+
+    /// <summary>Scrolls to the Claude API key section and focuses its box (Ask's "Open Settings").</summary>
+    public void FocusApiKey()
+    {
+        _apiKey.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true, VerticalAlignmentRatio = 0.1 });
+        _apiKey.FocusBox();
+    }
+
+    public GeneralTabView(GeneralTabViewModel vm, ApiKeyTabViewModel apiKey)
     {
         var stack = new StackPanel { Margin = new Thickness(0, 0, Theme.S3, Theme.S2) };
         stack.Children.Add(SettingsUi.Title("General"));
@@ -82,9 +91,17 @@ internal sealed class GeneralTabView : Grid
         shots.Children.Add(folderRow);
         stack.Children.Add(SettingsUi.Card(shots));
 
-        // ---- Spotify: connect your account for the media player's Like button ----
+        // ---- Spotify: connect your account (Like button, playlist panel, search, playback) ----
         stack.Children.Add(new TextBlock { Text = "Spotify", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
-        stack.Children.Add(SettingsUi.Card(SpotifyCard(vm)));
+        var playlists = new NotchPlaylistsCard(vm);
+        stack.Children.Add(SettingsUi.Card(SpotifyCard(vm, playlists.Refresh)));
+        stack.Children.Add(new TextBlock { Text = "Notch playlists", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
+        stack.Children.Add(SettingsUi.Card(playlists));
+
+        // ---- Claude API key (was its own tab): the same box, Paste, Save / Remove / Test and status ----
+        stack.Children.Add(new TextBlock { Text = "Claude API key", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
+        _apiKey = new ApiKeyTabView(apiKey, embedded: true);
+        stack.Children.Add(SettingsUi.Card(_apiKey));
 
         stack.Children.Add(new TextBlock { Text = "Ask hotkey", Style = SettingsUi.StyleOf("SectionText"), Margin = new Thickness(Theme.S1, Theme.S4, 0, Theme.S2) });
         var hotkey = new Grid { MinHeight = 40 };
@@ -108,21 +125,23 @@ internal sealed class GeneralTabView : Grid
     }
 
     /// <summary>
-    /// Spotify: your Spotify app's Client ID, then Connect (signs in through your browser) / Disconnect, with the
-    /// status and a short how-to (the redirect URI to add to the Spotify app).
+    /// Spotify: your Spotify app's Client ID, then Connect (signs in through your browser, OAuth with PKCE) and
+    /// Disconnect, with the status (a sign-in from before the playlist panel shows "Reconnect"), a short how-to (the
+    /// redirect URI to add to the Spotify app) and Spotify's Development Mode rules.
     /// </summary>
-    private static FrameworkElement SpotifyCard(GeneralTabViewModel vm)
+    private static FrameworkElement SpotifyCard(GeneralTabViewModel vm, Action connectedChanged)
     {
         var panel = new StackPanel { Spacing = Theme.S2 };
-        var title = new TextBlock { Text = "Like button on the media player", Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold };
+        var title = new TextBlock { Text = "Connect Spotify", Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold };
         panel.Children.Add(title);
         panel.Children.Add(new TextBlock
         {
-            Text = $"Create a free app at developer.spotify.com/dashboard, add {SpotifyService.RedirectUri} as a Redirect URI, tick \"Web API\", then paste its Client ID here and press Connect.",
+            Text = $"For the Like button, the playlist panel, search and playing songs from the notch. Create a free app at developer.spotify.com/dashboard, add {SpotifyService.RedirectUri} as a Redirect URI, tick \"Web API\", then paste its Client ID here and press Connect.",
             Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None,
         });
         var row = new Grid { ColumnSpacing = Theme.S2 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var id = new TextBox { PlaceholderText = "Client ID", Text = vm.SpotifyClientId, FontFamily = Theme.MonoFont, FontSize = Theme.FontBody, Height = Theme.SettingsFieldHeight, Padding = Theme.SettingsFieldPadding, VerticalContentAlignment = VerticalAlignment.Center };
         InputStyle.Apply(id);
@@ -131,30 +150,193 @@ internal sealed class GeneralTabView : Grid
         var connect = new PillButton(null, "Connect") { VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(connect, 1);
         row.Children.Add(connect);
+        var disconnect = new PillButton(null, "Disconnect", quiet: true) { VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(disconnect, 2);
+        row.Children.Add(disconnect);
         panel.Children.Add(row);
-        var status = new TextBlock { Style = SettingsUi.StyleOf("CaptionText"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None };
-        panel.Children.Add(status);
+
+        // Status: a dot and a line (connected / needs reconnect / not connected / an error).
+        var statusRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Theme.S2 };
+        var dot = new Ellipse { Width = 8, Height = 8, VerticalAlignment = VerticalAlignment.Center };
+        var status = new TextBlock { Style = SettingsUi.StyleOf("CaptionText"), TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None, VerticalAlignment = VerticalAlignment.Center };
+        statusRow.Children.Add(dot);
+        statusRow.Children.Add(status);
+        panel.Children.Add(statusRow);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Spotify's Development Mode: the app's owner needs Spotify Premium, and up to 5 accounts can use it (add each under User Management in the dashboard). " +
+                   "Songs are listed only for playlists you own or collaborate on (others get a Play button), and search shows up to 10 results.",
+            Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.TertiaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None,
+        });
+
         bool busy = false;
         void Show(string? message = null, bool error = false)
         {
-            bool on = vm.Spotify?.IsConnected == true;
-            connect.SetContent(null!, busy ? "Waiting…" : on ? "Disconnect" : "Connect");
-            status.Text = message ?? (on ? "Connected. The heart shows when Spotify is playing." : "Not connected.");
-            status.Foreground = error ? Theme.DangerBrush : on ? Theme.SuccessBrush : Theme.SecondaryText;
+            var sp = vm.Spotify;
+            bool on = sp?.IsConnected == true, full = sp?.HasLibraryScopes == true;
+            connect.SetContent(null!, busy ? "Waiting…" : on && !full ? "Reconnect" : "Connect");
+            connect.Visibility = !on || !full || busy ? Visibility.Visible : Visibility.Collapsed;
+            disconnect.Visibility = on && !busy ? Visibility.Visible : Visibility.Collapsed;
+            status.Text = message ?? (!on ? "Not connected."
+                : !full ? "Connected for the Like button. Reconnect to allow playlists, search and playback."
+                : "Connected. Open the arrow under the media controls while Spotify plays.");
+            var color = error ? Theme.DangerColor : on && full ? Theme.SuccessColor : on ? Theme.BatteryAmber : Theme.TertiaryTextColor;
+            dot.Fill = new SolidColorBrush(color);
+            status.Foreground = error ? Theme.DangerBrush : Theme.SecondaryText;
         }
         connect.Click += async () =>
         {
             if (vm.Spotify is not { } sp || busy) return;
             vm.SpotifyClientId = id.Text;
-            if (sp.IsConnected) { sp.Disconnect(); Show(); return; }
             busy = true;
             Show("Finish signing in in your browser…");
             var error = await sp.ConnectAsync();
             busy = false;
             Show(error, error != null);
+            connectedChanged();
+        };
+        disconnect.Click += () =>
+        {
+            if (vm.Spotify is not { } sp || busy) return;
+            sp.Disconnect();
+            Show();
+            connectedChanged();
         };
         Show();
         return panel;
+    }
+
+    // =======================================================================================================
+    /// <summary>
+    /// "Notch playlists": what the media player's playlist panel lists (recently played, your picks, or both with the
+    /// picks pinned on top), and the picks themselves: every playlist of yours (GET /me/playlists) with a checkbox, its
+    /// cover and name. Saved to settings.json at once.
+    /// </summary>
+    internal sealed class NotchPlaylistsCard : StackPanel
+    {
+        private readonly GeneralTabViewModel _vm;
+        private readonly StackPanel _list = new() { Spacing = 2 };
+        private readonly TextBlock _listStatus = new();
+        private readonly PillButton _reload = new(null, "Refresh", quiet: true) { VerticalAlignment = VerticalAlignment.Center };
+        private bool _loading;
+
+        public NotchPlaylistsCard(GeneralTabViewModel vm)
+        {
+            _vm = vm;
+            Spacing = Theme.S2;
+            var source = new Segmented(("recent", "Recently played"), ("selected", "My selected"), ("both", "Both")) { HorizontalAlignment = HorizontalAlignment.Stretch };
+            source.Value = vm.SpotifyPlaylistSource;
+            source.Selected += v => vm.SpotifyPlaylistSource = v;
+            Children.Add(new TextBlock { Text = "Show in the playlist panel", Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold });
+            Children.Add(new TextBlock
+            {
+                Text = "Recently played comes from your listening history; \"Both\" pins your selected playlists above it.",
+                Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.SecondaryText, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None,
+            });
+            Children.Add(source);
+            Children.Add(new Rectangle { Height = 1, Fill = Theme.CardBorderBrush, Margin = new Thickness(0, Theme.S1, 0, Theme.S1) });
+
+            var head = new Grid();
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var headText = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            headText.Children.Add(new TextBlock { Text = "My selected playlists", Style = SettingsUi.StyleOf("BaseText"), FontFamily = Theme.FontSemiBold, FontWeight = FontWeights.SemiBold });
+            _listStatus.Style = SettingsUi.StyleOf("CaptionText");
+            _listStatus.Foreground = Theme.SecondaryText;
+            _listStatus.TextWrapping = TextWrapping.Wrap;
+            _listStatus.TextTrimming = TextTrimming.None;
+            _listStatus.Margin = Theme.GapTopS1;
+            headText.Children.Add(_listStatus);
+            head.Children.Add(headText);
+            Grid.SetColumn(_reload, 1);
+            _reload.Margin = Theme.GapLeftS3;
+            _reload.Click += () => _ = LoadAsync(force: true);
+            head.Children.Add(_reload);
+            Children.Add(head);
+            Children.Add(new ScrollViewer { Content = _list, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, Theme.S2, 0) });
+            Loaded += (_, _) => _ = LoadAsync(force: false);
+        }
+
+        /// <summary>The account changed (connected / disconnected): reload the list.</summary>
+        public void Refresh() => _ = LoadAsync(force: true);
+
+        private async Task LoadAsync(bool force)
+        {
+            if (_loading) return;
+            var sp = _vm.Spotify;
+            if (sp == null || !sp.IsConnected) { ShowStatus("Connect Spotify above to choose playlists."); _list.Children.Clear(); return; }
+            if (!sp.HasLibraryScopes) { ShowStatus("Reconnect Spotify above to allow playlists."); _list.Children.Clear(); return; }
+            _loading = true;
+            ShowStatus("Loading your playlists…");
+            try
+            {
+                var r = await sp.MyPlaylistsAsync(force);
+                if (!r.Ok) { ShowStatus(sp.Describe(r.Error)); return; }
+                Build(r.Value!);
+            }
+            finally { _loading = false; }
+        }
+
+        private void ShowStatus(string text) => _listStatus.Text = text;
+
+        private void Build(List<SpotifyPlaylist> all)
+        {
+            _list.Children.Clear();
+            var picked = _vm.PinnedPlaylists.ToDictionary(p => p.Id);
+            // Picks that are no longer among your playlists (unfollowed) stay listed so they can be removed.
+            var rows = new List<SpotifyPlaylist> { SpotifyService.LikedSongs }; // not a playlist in the API, but pickable
+            rows.AddRange(all);
+            foreach (var p in picked.Values.Where(p => p.Id != SpotifyService.LikedSongsId && all.All(a => a.Id != p.Id)))
+                rows.Add(new SpotifyPlaylist(p.Id, p.Uri, p.Name, p.ImageUrl, null));
+            foreach (var p in rows) _list.Children.Add(Row(p, picked.ContainsKey(p.Id)));
+            int n = picked.Count;
+            ShowStatus(rows.Count == 0 ? "You don't have any playlists yet." : n == 0 ? $"{rows.Count} playlists. Tick the ones to show in the notch." : $"{n} selected of {rows.Count}.");
+            // Keep stored names / covers current (renamed playlists, new covers).
+            _vm.UpdatePinnedDetails(all);
+        }
+
+        private FrameworkElement Row(SpotifyPlaylist p, bool isPicked)
+        {
+            var row = new Grid { MinHeight = 44, Background = Theme.TransparentBrush, Tag = SettingsWindow.NoDragTag };
+            var fill = new Border { Background = Theme.CardHoverBrush, CornerRadius = Theme.RadiusSmall };
+            row.Children.Add(fill);
+            Motions.HoverFade(row, fill);
+            var line = new Grid { Margin = new Thickness(Theme.S1, Theme.S1, Theme.S2, Theme.S1), ColumnSpacing = Theme.S3 };
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var box = new CheckBox { IsChecked = isPicked, MinWidth = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
+            line.Children.Add(box);
+            var cover = SpotifyPanel.Cover(p.ImageUrl, 36, 6);
+            cover.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(cover, 1);
+            line.Children.Add(cover);
+            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock { Text = p.Name, Style = SettingsUi.StyleOf("BaseText"), TextTrimming = TextTrimming.CharacterEllipsis });
+            if (!string.IsNullOrEmpty(p.Owner))
+                text.Children.Add(new TextBlock { Text = "by " + p.Owner, Style = SettingsUi.StyleOf("CaptionText"), Foreground = Theme.TertiaryText, TextTrimming = TextTrimming.CharacterEllipsis });
+            Grid.SetColumn(text, 2);
+            line.Children.Add(text);
+            row.Children.Add(line);
+            box.Checked += (_, _) => { _vm.SetPinned(p, true); Count(); };
+            box.Unchecked += (_, _) => { _vm.SetPinned(p, false); Count(); };
+            row.Tapped += (_, e) => { if (!IsInside(e.OriginalSource as DependencyObject, box)) box.IsChecked = box.IsChecked != true; };
+            return row;
+        }
+
+        private static bool IsInside(DependencyObject? el, DependencyObject container)
+        {
+            for (var d = el; d != null; d = VisualTreeHelper.GetParent(d))
+                if (ReferenceEquals(d, container)) return true;
+            return false;
+        }
+
+        private void Count()
+        {
+            int n = _vm.PinnedPlaylists.Count, total = _list.Children.Count;
+            ShowStatus(n == 0 ? $"{total} playlists. Tick the ones to show in the notch." : $"{n} selected of {total}.");
+        }
+
     }
 
     /// <summary>A row with a bold label + caption on the left and <paramref name="control"/> on the right.</summary>
