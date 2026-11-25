@@ -178,7 +178,22 @@ public sealed class NextSongView : Grid
         _artist.Text = a.Subtitle ?? "";
         _artist.Visibility = string.IsNullOrEmpty(a.Subtitle) ? Visibility.Collapsed : Visibility.Visible;
 
-        var art = a.Artwork;
+        await SetArtAsync(a.Artwork);
+    }
+
+    /// <summary>
+    /// The song's cover arrived after the pill appeared (players update the thumbnail late): show it in place, without
+    /// replaying the entrance.
+    /// </summary>
+    public void UpdateArt(Windows.Graphics.Imaging.SoftwareBitmap? art)
+    {
+        if (art == null || ReferenceEquals(art, _shownArt)) return;
+        _ = SetArtAsync(art);
+        if (Anim.Enabled) { _artIn.Snap(0.6); _artIn.SetTarget(1, Motion.Pop); }
+    }
+
+    private async Task SetArtAsync(Windows.Graphics.Imaging.SoftwareBitmap? art)
+    {
         if (ReferenceEquals(art, _shownArt) && art != null) return;
         _shownArt = art;
         _artImage.Visibility = art != null ? Visibility.Visible : Visibility.Collapsed;

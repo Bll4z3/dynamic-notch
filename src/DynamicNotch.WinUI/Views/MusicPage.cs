@@ -90,11 +90,17 @@ public sealed partial class MusicPage : Grid
             wrap.HorizontalAlignment = HorizontalAlignment.Left;
             _titleBlock.Children.Add(wrap);
         }
+        // The title line also carries the queue icon right after the last character (TitleLine keeps it in view).
+        _title.TextTrimming = TextTrimming.CharacterEllipsis;
+        _title.TextWrapping = TextWrapping.NoWrap;
+        _titleWrap.Child = null;
+        _titleWrap.Child = new TitleLine(_title, _queueButton);
         _titleFlip.Child = _titleBlock;
         _details.Children.Add(_titleFlip);
 
         // Progress: elapsed | bar | remaining (bold, tabular, +2pt)
-        SetRow(_progress, 2);
+        SetRow(_progressFlip, 2);
+        _progressFlip.Child = _progress;
         _progress.ColumnDefinitions.Add(new ColumnDefinition { Width = Theme.TimeColumn });
         _progress.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _progress.ColumnDefinitions.Add(new ColumnDefinition { Width = Theme.TimeColumn });
@@ -106,7 +112,7 @@ public sealed partial class MusicPage : Grid
         _progress.Children.Add(_elapsed);
         _progress.Children.Add(_seek);
         _progress.Children.Add(_remaining);
-        _details.Children.Add(_progress);
+        _details.Children.Add(_progressFlip);
 
         // Transport: outline prev/next, large filled play/pause, then the lyrics button.
         SetRow(_transportFlip, 4);
@@ -549,6 +555,7 @@ public sealed partial class MusicPage : Grid
                 var target = AlbumColorService.Extract(art);
                 if (!_hasArtAccent || target != _accent) { _accent = target; _hasArtAccent = true; _seek.SetAccent(target, animate: IsLoaded); }
             }
+            OnArtAccent(art == null ? null : _accent);
             var source = await ImageLoader.ToSourceAsync(art);
             if (ReferenceEquals(art, _vm.Artwork)) _artBrush.ImageSource = source;
         }

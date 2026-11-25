@@ -22,6 +22,9 @@ public sealed record SpotifyTrack(string Id, string Uri, string Name, string Art
     public string PrimaryArtist { get; init; } = "";
 }
 
+/// <summary>Your playback queue: the song playing now and the songs after it (in order).</summary>
+public sealed record SpotifyQueue(SpotifyTrack? Current, IReadOnlyList<SpotifyTrack> Items);
+
 /// <summary>One page of a playlist's songs. <see cref="NextOffset"/> is null after the last page.</summary>
 public sealed record SpotifyTrackPage(List<SpotifyTrack> Tracks, int Total, int? NextOffset);
 
@@ -142,7 +145,11 @@ public sealed partial class SpotifyService
     }
 
     /// <summary>The playlist the current playback comes from (GET /me/player context), or null.</summary>
-    private async Task<string?> CurrentPlaylistIdAsync(CancellationToken ct)
+    private async Task<string?> CurrentPlaylistIdAsync(CancellationToken ct) =>
+        await CurrentContextAsync(ct) is ("playlist", { } uri) ? uri.Split(':').Last() : null;
+
+    /// <summary>What the current playback comes from (GET /me/player context): its type and URI, or null.</summary>
+    private async Task<(string Type, string Uri)?> CurrentContextAsync(CancellationToken ct)
     {
         var r = await CallAsync(HttpMethod.Get, $"{Api}/me/player", null, ct);
         if (!r.Ok || r.Status != HttpStatusCode.OK || r.Body.Length == 0) return null;
@@ -150,9 +157,64 @@ public sealed partial class SpotifyService
         {
             using var doc = JsonDocument.Parse(r.Body);
             if (!doc.RootElement.TryGetProperty("context", out var ctx) || ctx.ValueKind != JsonValueKind.Object) return null;
-            return Str(ctx, "type") == "playlist" && Str(ctx, "uri") is { } uri ? uri.Split(':').Last() : null;
+            return Str(ctx, "type") is { } type && Str(ctx, "uri") is { } uri ? (type, uri) : null;
         }
         catch (Exception ex) when (IsParseError(ex)) { return null; }
+    }
+
+    /// <summary>Whether Spotify is playing right now and what (GET /me/player), or null when it can't tell.</summary>
+    public async Task<(bool IsPlaying, string? Track)?> PlaybackStateAsync(CancellationToken ct = default)
+    {
+        if (Ready() != SpotifyError.None) return null;
+        var r = await CallAsync(HttpMethod.Get, $"{Api}/me/player", null, ct);
+        if (!r.Ok || r.Status != HttpStatusCode.OK || r.Body.Length == 0) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(r.Body);
+            var root = doc.RootElement;
+            bool playing = root.TryGetProperty("is_playing", out var p) && p.ValueKind == JsonValueKind.True;
+            string? name = root.TryGetProperty("item", out var item) && item.ValueKind == JsonValueKind.Object ? Str(item, "name") : null;
+            return (playing, name);
+        }
+        catch (Exception ex) when (IsParseError(ex)) { return null; }
+    }
+
+    // ---- Playing a queued song ---------------------------------------------------------------------------------
+    /// <summary>
+    /// Plays a song from the queue. The Web API has no "play this queued song" call, so: the first one is just Next;
+    /// otherwise, when playback comes from a playlist / album / Liked Songs, it jumps there inside that context (the
+    /// rest carries on after it, songs you queued yourself stay queued) and checks that the right song started. If the
+    /// song isn't in that context (you queued it yourself), it skips forward to it instead, like Spotify does (the songs
+    /// in between leave the queue). <paramref name="position"/> is the song's place in the queue (0 = next).
+    /// </summary>
+    public async Task<SpotifyError> PlayQueuedAsync(SpotifyTrack target, int position, CancellationToken ct = default)
+    {
+        if (Ready() is var e && e != SpotifyError.None) return e;
+        if (position > 0 && await CurrentContextAsync(ct) is ({ } type, { } uri) && type is "playlist" or "album" or "collection")
+        {
+            var body = JsonSerializer.Serialize(new { context_uri = uri, offset = new { uri = target.Uri } });
+            var played = await PlayAsync(body, ct);
+            Log($"queue jump in {type}: {played}");
+            if (played is SpotifyError.NoDevice or SpotifyError.RateLimited or SpotifyError.Offline or SpotifyError.PremiumRequired or SpotifyError.NotConnected) return played;
+            if (played == SpotifyError.None)
+            {
+                // Spotify may start the context from the top when the song isn't in it: make sure the right one plays.
+                await Task.Delay(700, ct);
+                if (await CurrentTrackAsync(ct) is { } now && now.Id == target.Id) return SpotifyError.None;
+                Log("queue jump: a different song started; playing the song itself");
+                return await PlayTrackAsync(target.Uri, ct);
+            }
+            // Not in that context (rejected): fall through to skipping.
+        }
+        int skips = Math.Min(position + 1, 25);
+        for (int i = 0; i < skips; i++)
+        {
+            var r = await CallAsync(HttpMethod.Post, $"{Api}/me/player/next", null, ct);
+            var err = ErrorOf(r, player: true);
+            if (err != SpotifyError.None) { Log($"queue skip {i + 1}/{skips}: {err}"); return err; }
+        }
+        Log($"queue skip: {skips} skips");
+        return SpotifyError.None;
     }
 
     /// <summary>A playlist's name and cover (GET /playlists/{id}, metadata only). Cached, including "not available".</summary>
@@ -210,23 +272,48 @@ public sealed partial class SpotifyService
     }
 
     // ---- Queue ----------------------------------------------------------------------------------------------
-    /// <summary>The song playing now and the next one in your queue (GET /me/player/queue).</summary>
-    public async Task<SpotifyResult<(SpotifyTrack? Current, SpotifyTrack? Next)>> UpNextAsync(CancellationToken ct = default)
+    /// <summary>The last queue fetched (by the queue view or the Next prediction), and when.</summary>
+    public SpotifyQueue? LastQueue { get; private set; }
+    public DateTimeOffset LastQueueAt { get; private set; }
+
+    /// <summary>Raised (UI thread) with every freshly fetched queue: one request serves the queue view and the Next prediction.</summary>
+    public event Action<SpotifyQueue>? QueueUpdated;
+
+    /// <summary>
+    /// What's playing and what plays next (GET /me/player/queue: currently_playing + queue, which Spotify fills with your
+    /// added songs, then the rest of the playlist / album / autoplay). View-only: the Web API can't reorder, remove or
+    /// jump to a queued song. Episodes and local files are left out.
+    /// </summary>
+    public async Task<SpotifyResult<SpotifyQueue>> GetQueueAsync(CancellationToken ct = default)
     {
-        if (Ready() is var e && e != SpotifyError.None) return SpotifyResult<(SpotifyTrack?, SpotifyTrack?)>.Fail(e);
+        if (Ready() is var e && e != SpotifyError.None) return SpotifyResult<SpotifyQueue>.Fail(e);
         var r = await CallAsync(HttpMethod.Get, $"{Api}/me/player/queue", null, ct);
-        if (!r.Ok || r.Body.Length == 0) return SpotifyResult<(SpotifyTrack?, SpotifyTrack?)>.Fail(ErrorOf(r, player: true));
+        if (r.Ok && (r.Status == HttpStatusCode.NoContent || r.Body.Length == 0)) return SpotifyResult<SpotifyQueue>.Fail(SpotifyError.NoDevice); // nothing playing anywhere
+        if (!r.Ok) { Log($"queue: {(int)r.Status} {r.Error}"); return SpotifyResult<SpotifyQueue>.Fail(ErrorOf(r, player: true)); }
         try
         {
             using var doc = JsonDocument.Parse(r.Body);
             var root = doc.RootElement;
             var current = root.TryGetProperty("currently_playing", out var c) && c.ValueKind == JsonValueKind.Object ? ParseTrack(c) : null;
-            SpotifyTrack? next = null;
+            var items = new List<SpotifyTrack>();
             if (root.TryGetProperty("queue", out var q) && q.ValueKind == JsonValueKind.Array)
-                foreach (var t in q.EnumerateArray()) { if (t.ValueKind == JsonValueKind.Object && ParseTrack(t) is { } track) { next = track; break; } }
-            return new((current, next), SpotifyError.None);
+                foreach (var t in q.EnumerateArray())
+                    if (t.ValueKind == JsonValueKind.Object && ParseTrack(t) is { } track) items.Add(track);
+            var queue = new SpotifyQueue(current, items);
+            LastQueue = queue;
+            LastQueueAt = DateTimeOffset.Now;
+            Log($"queue: {items.Count} upcoming");
+            QueueUpdated?.Invoke(queue);
+            return new(queue, SpotifyError.None);
         }
-        catch (Exception ex) when (IsParseError(ex)) { return SpotifyResult<(SpotifyTrack?, SpotifyTrack?)>.Fail(SpotifyError.Failed); }
+        catch (Exception ex) when (IsParseError(ex)) { return SpotifyResult<SpotifyQueue>.Fail(SpotifyError.Failed); }
+    }
+
+    /// <summary>The song playing now and the next one in your queue (for the Next prediction).</summary>
+    public async Task<SpotifyResult<(SpotifyTrack? Current, SpotifyTrack? Next)>> UpNextAsync(CancellationToken ct = default)
+    {
+        var r = await GetQueueAsync(ct);
+        return r.Ok ? new((r.Value!.Current, r.Value.Items.FirstOrDefault()), SpotifyError.None) : SpotifyResult<(SpotifyTrack?, SpotifyTrack?)>.Fail(r.Error);
     }
 
     // ---- Search ---------------------------------------------------------------------------------------------

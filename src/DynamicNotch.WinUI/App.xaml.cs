@@ -112,6 +112,7 @@ public partial class App : Application
         var spotifyLike = new SpotifyLikeViewModel(musicVm, spotify);
         var spotifyLibrary = new SpotifyLibraryViewModel(musicVm, spotify, settings);
         _upNext = new SpotifyUpNext(media, musicVm, spotify); // Next shows the queued song at once (Spotify reports skips late)
+        spotifyLibrary.ExpectTrack = _upNext.ExpectAsync; // so does playing a song from the queue view
         var lyrics = new LyricsViewModel(media, new Services.Lyrics.LyricsService(), settings);
         var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus, updates, fonts, theme);
         settingsVm.General.Spotify = spotify;
@@ -418,6 +419,9 @@ public partial class App : Application
             t.Tick += (_, _) =>
             {
                 step++;
+                if (step == 1 && what.Equals("queue", StringComparison.OrdinalIgnoreCase)) { lib.OpenQueue(); t.Stop(); return; }
+                if (step == 1 && what.Equals("queue-demo", StringComparison.OrdinalIgnoreCase)) { lib.DevQueueDemo(); t.Stop(); return; }
+                if (step == 1 && what.Equals("queue-demo-play", StringComparison.OrdinalIgnoreCase)) { lib.DevQueueDemo(playThird: true); t.Stop(); return; }
                 if (step == 1) { lib.Open(); if (what.Length == 0) t.Stop(); return; }
                 t.Stop();
                 if (what.StartsWith("search:", StringComparison.OrdinalIgnoreCase)) { lib.Query = what[7..]; _window?.DevFocusSpotifySearch(); }

@@ -201,6 +201,10 @@ public static class Motion
     public static readonly SpringPreset SpotifyPanelOpen = SpringPreset.FromResponse(0.42, 0.9);
     /// <summary>Panel ⇄ playlist view: the details slide out left, the songs slide in from the right.</summary>
     public static readonly SpringPreset SpotifyViewSwap = SpringPreset.FromResponse(0.4, 0.9);
+    /// <summary>The player's title / progress / controls leaving for a side view (~150 ms, ease-out, no overshoot).</summary>
+    public static readonly SpringPreset SpotifyDetailsOut = SpringPreset.FromResponse(0.24, 1.0);
+    /// <summary>The notch growing for the queue: a little overshoot, so it feels springy rather than linear.</summary>
+    public static readonly SpringPreset SpotifyQueueResize = SpringPreset.FromResponse(0.5, 0.74);
 
     // ---- Activity pills --------------------------------------------------------------------------------
     /// <summary>The notch growing into an activity pill and springing between pill widths.</summary>
