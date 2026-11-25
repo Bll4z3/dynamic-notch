@@ -88,6 +88,8 @@ public static class Icons
     public const string Gauge = "M12 14 l4 -4 M3.34 19 a10 10 0 1 1 17.32 0";
     public const string Timer = "M10 2 h4 M12 14 l3 -3 M20 14 a8 8 0 1 1 -16 0 a8 8 0 1 1 16 0 z";
     public const string Plus = "M5 12 h14 M12 5 v14";
+    /// <summary>Spotify-style queue: three lines and a small play triangle (lines stroke, triangle filled).</summary>
+    public const string Queue = "F1 M3 6 H17 M3 11 H17 M3 16 H10 M15 14 V21 L21 17.5 Z";
     public const string Minus = "M5 12 h14";
     public const string ChevronUp = "M18 15 l-6 -6 l-6 6";
     public const string ChevronDown = "M6 9 l6 6 l6 -6";

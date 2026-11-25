@@ -419,7 +419,7 @@ public sealed partial class NotchWindow : Window
                 (w, h) = expanded;
                 if (Vm.IsPaletteOpen && _expandedRevealed) preset = Motion.PaletteResize;
                 else if (Vm.IsAskPage && _expandedRevealed) preset = Motion.AskResize;
-                else if (_spotifyResize && _expandedRevealed) preset = Motion.SpotifyPanelResize; // the playlist panel: one smooth glide down / up
+                else if (_spotifyResize && _expandedRevealed) preset = _frame.Music.SpringyResize ? Motion.SpotifyQueueResize : Motion.SpotifyPanelResize; // one glide down / up (springier for the queue)
                 else if (_lyricsResize && _expandedRevealed && Math.Abs(h - _height.Target) > 0.5)
                 {
                     // The media player's lyrics layout: the notch grows with the blocks' downward move (lead) and, when

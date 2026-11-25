@@ -418,6 +418,8 @@ public partial class App : Application
             t.Tick += (_, _) =>
             {
                 step++;
+                if (step == 1 && what.Equals("queue", StringComparison.OrdinalIgnoreCase)) { lib.OpenQueue(); t.Stop(); return; }
+                if (step == 1 && what.Equals("queue-demo", StringComparison.OrdinalIgnoreCase)) { lib.DevQueueDemo(); t.Stop(); return; }
                 if (step == 1) { lib.Open(); if (what.Length == 0) t.Stop(); return; }
                 t.Stop();
                 if (what.StartsWith("search:", StringComparison.OrdinalIgnoreCase)) { lib.Query = what[7..]; _window?.DevFocusSpotifySearch(); }

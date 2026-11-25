@@ -5,7 +5,7 @@ using Microsoft.UI.Dispatching;
 namespace DynamicNotch.ViewModels;
 
 /// <summary>Where the media player's Spotify panel is: closed, the playlist panel, or one playlist's songs.</summary>
-public enum SpotifyPanelView { Closed, Panel, Playlist }
+public enum SpotifyPanelView { Closed, Panel, Playlist, Queue }
 
 /// <summary>One group of playlists in the panel (a header only when both groups show).</summary>
 public sealed record PlaylistSection(string? Header, IReadOnlyList<SpotifyPlaylist> Items);
@@ -48,8 +48,12 @@ public sealed class SpotifyLibraryViewModel : ObservableObject
             if (now == wasSpotify) return;
             wasSpotify = now;
             OnPropertyChanged(nameof(IsSpotifySource));
+            OnPropertyChanged(nameof(CanShowQueue));
             if (!now) Close(); // something else is playing: the panel goes with the arrow
         };
+        music.TrackChanged += OnTrackChanged;
+        spotify.QueueUpdated += q => SetQueue(q);
+        spotify.Changed += () => { OnPropertyChanged(nameof(CanShowQueue)); if (!spotify.HasLibraryScopes) SetQueue(null); };
         spotify.Changed += () => { _recent = null; _mine = null; _sectionsLoaded = default; if (IsOpen) _ = LoadSectionsAsync(force: true); };
         settings.Changed += () =>
         {
@@ -93,6 +97,91 @@ public sealed class SpotifyLibraryViewModel : ObservableObject
         _playlistCts?.Cancel();
         ClearSearch();
         View = SpotifyPanelView.Closed;
+    }
+
+    // =========================================================================================================
+    // The queue
+    // =========================================================================================================
+    private SpotifyPanelView _queueReturn;
+
+    /// <summary>The queue button shows: Spotify plays and the account allows playback reading.</summary>
+    public bool CanShowQueue => IsSpotifySource && _spotify.HasLibraryScopes;
+
+    private SpotifyQueue? _queue;
+    /// <summary>The queue on screen (null until loaded). Each change is raised with <see cref="QueueChanged"/> for the view to animate.</summary>
+    public SpotifyQueue? Queue => _queue;
+    public event Action? QueueChanged;
+
+    private bool _queueLoading;
+    public bool QueueLoading { get => _queueLoading; private set => Set(ref _queueLoading, value); }
+
+    private string? _queueMessage;
+    /// <summary>A problem loading the queue (offline, no device…), shown inline in the queue view.</summary>
+    public string? QueueMessage { get => _queueMessage; private set => Set(ref _queueMessage, value); }
+
+    /// <summary>Opens the queue view (from the player, or from the panel: Back returns there).</summary>
+    public void OpenQueue()
+    {
+        if (!CanShowQueue) return;
+        if (View != SpotifyPanelView.Queue) _queueReturn = View == SpotifyPanelView.Playlist ? SpotifyPanelView.Panel : View;
+        ClearSearch();
+        View = SpotifyPanelView.Queue;
+        // Fresh unless a fetch just happened (the Next prediction fetches the queue a moment after every song).
+        if (_spotify.LastQueue is { } last && _queue == null) SetQueue(last);
+        if (DateTimeOffset.Now - _spotify.LastQueueAt > TimeSpan.FromSeconds(4)) _ = RefreshQueueAsync();
+    }
+
+    /// <summary>Dev (--spotify-panel queue-demo): shows songs from a read-only search as the queue, then moves it up every few seconds.</summary>
+    internal async void DevQueueDemo()
+    {
+        var r = await _spotify.SearchTracksAsync("nines");
+        if (!r.Ok || r.Value!.Count < 3) return;
+        var all = r.Value;
+        SetQueue(new SpotifyQueue(all[0], all.Skip(1).Take(6).ToList()));
+        OpenQueue();
+        for (int i = 1; i < 4; i++)
+        {
+            await Task.Delay(3500);
+            SetQueue(new SpotifyQueue(all[i], all.Skip(i + 1).Take(6).ToList())); // the next song moves up; one joins at the end
+        }
+    }
+
+    public void CloseQueue()
+    {
+        if (View == SpotifyPanelView.Queue) View = _queueReturn;
+    }
+
+    public async Task RefreshQueueAsync()
+    {
+        QueueLoading = _queue == null;
+        SpotifyResult<SpotifyQueue> r;
+        try { r = await _spotify.GetQueueAsync(); }
+        catch (Exception ex) { App.LogError(ex); r = SpotifyResult<SpotifyQueue>.Fail(SpotifyError.Failed); }
+        QueueLoading = false;
+        if (r.Ok) return; // the queue itself arrives through QueueUpdated
+        if (_queue is { Items.Count: > 0 }) Notice?.Invoke(_spotify.Describe(r.Error), true); // keep the songs on screen
+        else QueueMessage = _spotify.Describe(r.Error);
+    }
+
+    private void SetQueue(SpotifyQueue? q)
+    {
+        _queue = q;
+        if (q != null) QueueMessage = null;
+        OnPropertyChanged(nameof(Queue));
+        QueueChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// A new song: if it's the first one queued, the queue moves up at once (the fetch a moment later confirms it), so
+    /// the open queue view animates the change instead of waiting for Spotify.
+    /// </summary>
+    private void OnTrackChanged()
+    {
+        if (_queue is not { } q || q.Items.Count == 0) return;
+        var title = _music.Snapshot.Title.Trim();
+        if (title.Length == 0 || q.Current != null && string.Equals(q.Current.Name.Trim(), title, StringComparison.OrdinalIgnoreCase)) return;
+        if (string.Equals(q.Items[0].Name.Trim(), title, StringComparison.OrdinalIgnoreCase))
+            SetQueue(new SpotifyQueue(q.Items[0], q.Items.Skip(1).ToList()));
     }
 
     // =========================================================================================================
@@ -237,6 +326,7 @@ public sealed class SpotifyLibraryViewModel : ObservableObject
     {
         _playlistCts?.Cancel();
         if (View == SpotifyPanelView.Playlist) View = SpotifyPanelView.Panel;
+        else if (View == SpotifyPanelView.Queue) CloseQueue();
     }
 
     /// <summary>The next page of songs (the list asks as you scroll near its end).</summary>
