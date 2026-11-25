@@ -18,6 +18,8 @@ namespace DynamicNotch.Views;
 /// </summary>
 public sealed class HeartButton : Grid
 {
+    /// <summary>The heart's outline (24-unit grid), also used for Liked Songs' cover.</summary>
+    public static string HeartData => HeartPath;
     private const string HeartPath = "M19 14 c1.49 -1.46 3 -3.21 3 -5.5 A5.5 5.5 0 0 0 16.5 3 c-1.76 0 -3 .5 -4.5 2 c-1.5 -1.5 -2.74 -2 -4.5 -2 A5.5 5.5 0 0 0 2 8.5 c0 2.3 1.5 4.05 3 5.5 l7 7 Z";
     private static readonly Color Green = Color.FromArgb(255, 0x1E, 0xD7, 0x60);
     private readonly VectorIcon _outline = new(), _fill = new();

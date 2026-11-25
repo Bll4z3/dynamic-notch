@@ -22,7 +22,7 @@ namespace DynamicNotch.Views;
 /// new one (the art also from its old size), so nothing jumps; the panel slides and fades in beside them.
 /// </para>
 /// </summary>
-public sealed class MusicPage : Grid
+public sealed partial class MusicPage : Grid
 {
     private readonly MusicViewModel _vm;
     private readonly LyricsViewModel _lyricsVm;
@@ -43,7 +43,7 @@ public sealed class MusicPage : Grid
     private Windows.UI.Color _accent = Theme.AccentColor;
     private bool _hasArtAccent;
 
-    public MusicPage(MusicViewModel vm, SpotifyLikeViewModel like, LyricsViewModel lyrics, Microsoft.UI.Composition.Compositor compositor)
+    public MusicPage(MusicViewModel vm, SpotifyLikeViewModel like, LyricsViewModel lyrics, SpotifyLibraryViewModel library, Microsoft.UI.Composition.Compositor compositor)
     {
         _vm = vm;
         _like = like;
@@ -173,6 +173,7 @@ public sealed class MusicPage : Grid
         _like.PropertyChanged += (_, e) => RefreshHeart(animate: e.PropertyName == nameof(SpotifyLikeViewModel.IsLiked) && _like.ChangedByUser);
         _vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(MusicViewModel.IsVisible) && _vm.IsVisible) _like.Refresh(); };
         BuildControlMotion();
+        BuildSpotify(library, compositor);
         RefreshHeart(animate: false);
         Refresh("");
     }
@@ -202,7 +203,7 @@ public sealed class MusicPage : Grid
     /// title, the progress bar and the controls, each a beat apart.
     /// </summary>
     public IEnumerable<(FrameworkElement element, double order)> StaggerBlocks =>
-        new (FrameworkElement, double)[] { (_artStagger, 1), (_titleBlock, 2), (_progress, 3.5), (_transport, 5), (_lyricsHost, 3.5) };
+        new (FrameworkElement, double)[] { (_artStagger, 1), (_titleBlock, 2), (_progress, 3.5), (_transport, 5), (_lyricsHost, 3.5), (_arrowWrap, 5.5) };
 
     /// <summary>The lyrics panel's host (its stagger block fades without scaling).</summary>
     public FrameworkElement LyricsHostElement => _lyricsHost;
@@ -313,10 +314,13 @@ public sealed class MusicPage : Grid
     /// <summary>The layout switched (true: it's morphing, so what follows it, like the glow, should glide too).</summary>
     public event Action<bool>? LayoutChanged;
 
-    /// <summary>The page's height in the normal layout (the lyrics layout adds <see cref="Theme.LyricsExtraHeight"/>).</summary>
+    /// <summary>
+    /// The page's height in the normal layout (the lyrics layout adds <see cref="Theme.LyricsExtraHeight"/>). The Spotify
+    /// panel's row (<see cref="Theme.SpotifyPanelHeight"/>) is always laid out below it: the notch reveals it or not.
+    /// </summary>
     public double BaseHeight
     {
-        set { _baseHeight = value; Height = value + (_lyricsLayout ? Theme.LyricsExtraHeight : 0); SizeLyricsHost(); }
+        set { _baseHeight = value; Height = value + (_lyricsLayout ? Theme.LyricsExtraHeight : 0) + Theme.SpotifyPanelHeight; SizeLyricsHost(); }
     }
 
     /// <summary>The band behind the current lyric line, in this page's coordinates (the vocal glow flows there).</summary>
@@ -484,7 +488,7 @@ public sealed class MusicPage : Grid
         _heart.Margin = new Thickness(0, 0, on ? Theme.S1 : Theme.S3, 0);
         _play.Margin = on ? new Thickness(Theme.S1, 0, Theme.S1, 0) : Theme.TransportGap;
         _lyricsButton.Margin = new Thickness(on ? 0 : Theme.S1, 0, 0, 0);
-        if (!double.IsNaN(_baseHeight)) Height = _baseHeight + (on ? Theme.LyricsExtraHeight : 0);
+        if (!double.IsNaN(_baseHeight)) Height = _baseHeight + (on ? Theme.LyricsExtraHeight : 0) + Theme.SpotifyPanelHeight;
     }
 
     private void UpdatePanelShown()

@@ -15,7 +15,8 @@ public partial class App : Application
     private TrayService? _tray;
     private NotchWindow? _window;
     private DispatcherQueueTimer? _devCycle; // held: an unreferenced timer is collected and stops
-    private DispatcherQueueTimer? _devOpen;
+    private DispatcherQueueTimer? _devOpen, _devSpotify, _devMedia;
+    private SpotifyUpNext? _upNext;
     private DispatcherQueueTimer? _devPreview, _devPerf;
     private DispatcherQueueTimer? _devAsk;
     private DispatcherQueueTimer? _devToggle;
@@ -109,10 +110,13 @@ public partial class App : Application
         var spotify = new SpotifyService(settings);
         var musicVm = new MusicViewModel(media);
         var spotifyLike = new SpotifyLikeViewModel(musicVm, spotify);
+        var spotifyLibrary = new SpotifyLibraryViewModel(musicVm, spotify, settings);
+        _upNext = new SpotifyUpNext(media, musicVm, spotify); // Next shows the queued song at once (Spotify reports skips late)
         var lyrics = new LyricsViewModel(media, new Services.Lyrics.LyricsService(), settings);
         var settingsVm = new SettingsViewModel(secrets, claude, pages, settings, focus, updates, fonts, theme);
         settingsVm.General.Spotify = spotify;
         spotifyLike.ConnectRequested += () => Views.SettingsWindow.ShowSingle(settingsVm);
+        spotifyLibrary.SettingsRequested += () => Views.SettingsWindow.ShowSingle(settingsVm);
 
         var vm = new MainViewModel(settings,
             musicVm,
@@ -126,7 +130,7 @@ public partial class App : Application
             new UsageViewModel(new ClaudeUsageService()),
             focus,
             activity,
-            hub) { Screenshots = shots, QuickTimer = quickTimer, SpotifyLike = spotifyLike, Lyrics = lyrics, Palette = new CommandPaletteViewModel(settings, clipVm, shots, claude, quickTimer) };
+            hub) { Screenshots = shots, QuickTimer = quickTimer, SpotifyLike = spotifyLike, SpotifyLibrary = spotifyLibrary, Lyrics = lyrics, Palette = new CommandPaletteViewModel(settings, clipVm, shots, claude, quickTimer) };
 
         foreach (var src in new Action<Action<PillRequest>>[]
                  {
@@ -387,6 +391,46 @@ public partial class App : Application
             }
         }
         if (_args.Contains("--nav-icons", StringComparer.OrdinalIgnoreCase)) _window.ShowNavigatorIcons();
+        // Dev: `--media-trace` times media commands / events / publishes in media.log; `--media-test` also presses
+        // play-pause, play-pause, next and previous on the current player, a few seconds apart.
+        if (_args.Contains("--media-trace", StringComparer.OrdinalIgnoreCase) || _args.Contains("--media-test", StringComparer.OrdinalIgnoreCase))
+            MediaService.Trace = true;
+        if (_args.Contains("--media-test", StringComparer.OrdinalIgnoreCase))
+        {
+            var steps = new Action[] { () => vm.Music.PlayPauseCommand.Execute(null), () => vm.Music.PlayPauseCommand.Execute(null),
+                                       () => vm.Music.NextCommand.Execute(null), () => vm.Music.PreviousCommand.Execute(null) };
+            int i = 0;
+            var t = _devMedia = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            t.Interval = TimeSpan.FromSeconds(4);
+            t.Tick += (_, _) => { if (i < steps.Length) steps[i++](); else t.Stop(); };
+            t.Start();
+        }
+        // Dev: `--spotify-panel [search:<text> | playlist[:<n>]]` (with `--open music`): opens the media player's Spotify
+        // panel, then optionally types a search or opens the n-th playlist. Read-only: nothing is played or queued.
+        int spIdx = Array.FindIndex(_args, a => a.Equals("--spotify-panel", StringComparison.OrdinalIgnoreCase));
+        if (spIdx >= 0)
+        {
+            string what = spIdx + 1 < _args.Length && !_args[spIdx + 1].StartsWith("--") ? _args[spIdx + 1] : "";
+            var lib = vm.SpotifyLibrary;
+            var t = _devSpotify = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            int step = 0;
+            t.Interval = TimeSpan.FromMilliseconds(2500);
+            t.Tick += (_, _) =>
+            {
+                step++;
+                if (step == 1) { lib.Open(); if (what.Length == 0) t.Stop(); return; }
+                t.Stop();
+                if (what.StartsWith("search:", StringComparison.OrdinalIgnoreCase)) { lib.Query = what[7..]; _window?.DevFocusSpotifySearch(); }
+                else if (what.Equals("liked", StringComparison.OrdinalIgnoreCase)) lib.OpenPlaylist(SpotifyService.LikedSongs);
+                else if (what.StartsWith("playlist", StringComparison.OrdinalIgnoreCase))
+                {
+                    int n = what.Contains(':') && int.TryParse(what.Split(':')[1], out var k) ? k : 0;
+                    var all = lib.Sections.SelectMany(s => s.Items).ToList();
+                    if (all.Count > 0) lib.OpenPlaylist(all[Math.Clamp(n, 0, all.Count - 1)]);
+                }
+            };
+            t.Start();
+        }
         // Dev: `--preview` opens the clipboard preview card for the first tile (after the demo items arrive).
         if (_args.Contains("--preview", StringComparer.OrdinalIgnoreCase))
         {
@@ -531,6 +575,7 @@ public partial class App : Application
                 ("download", () => activity.Show(new Activity(ActivityKind.Download, "Downloaded", null, "", On: true, Subtitle: "Quarterly report.pdf", Key: "demo"))),
                 ("update", () => activity.Show(new Activity(ActivityKind.Update, "Update available", Subtitle: "Version 2.2.0", Value: "Update"))),
                 ("lowbattery", () => activity.Show(new Activity(ActivityKind.LowBattery, "Low battery", 0.12, Subtitle: "25 min left"))),
+                ("nextsong", () => _window?.DevNextSong("Midnight Drive", "The Night Shift")),
             };
             if (only.Length > 0 && !only.StartsWith("-")) steps = steps.Where(s => s.kind == only).ToList();
             vm.Hub.Record(new PillRequest(PillSource.Device, "WH-1000XM5", "Connected · 80%", Icons.Headphone));

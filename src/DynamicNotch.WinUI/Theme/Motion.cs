@@ -195,6 +195,13 @@ public static class Motion
     public static readonly SpringPreset PhaseChange = SpringPreset.FromResponse(0.5, 0.72);
     public const int PhaseCueMs = 1600;
 
+    // ---- Spotify panel ----------------------------------------------------------------------------------
+    /// <summary>The notch growing down for the playlist panel (and back), and the panel's own fade / drop.</summary>
+    public static readonly SpringPreset SpotifyPanelResize = SpringPreset.FromResponse(0.46, 0.88);
+    public static readonly SpringPreset SpotifyPanelOpen = SpringPreset.FromResponse(0.42, 0.9);
+    /// <summary>Panel ⇄ playlist view: the details slide out left, the songs slide in from the right.</summary>
+    public static readonly SpringPreset SpotifyViewSwap = SpringPreset.FromResponse(0.4, 0.9);
+
     // ---- Activity pills --------------------------------------------------------------------------------
     /// <summary>The notch growing into an activity pill and springing between pill widths.</summary>
     public static readonly SpringPreset ActivityMorph = SpringPreset.FromResponse(0.46, 0.76);
@@ -206,7 +213,8 @@ public static class Motion
     public const double LockClickImpulse = -2.2;
     /// <summary>How long each kind stays up before it dismisses itself (ms).</summary>
     public const int ActivitySliderMs = 1800, ActivityCapsMs = 1800, ActivityBatteryMs = 3000,
-                     ActivityDownloadDoneMs = 3000, ActivityUpdateMs = 3000, ActivityDownloadIdleMs = 6000;
+                     ActivityDownloadDoneMs = 3000, ActivityUpdateMs = 3000, ActivityDownloadIdleMs = 6000,
+                     ActivityNextSongMs = 4000;
     /// <summary>A waiting lower-priority activity is dropped once it's this old.</summary>
     public const int ActivityStaleMs = 2000;
     /// <summary>Activity content blocks fade / rise in this far apart, and rise by this much.</summary>

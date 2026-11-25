@@ -88,6 +88,7 @@ public sealed partial class NotchWindow
         _closedWeekly.SetShown(closed && s.UsageRingWeekly, animate);
         _frame.HeaderFiveHour.SetShown(open && s.UsageRingFiveHour, animate);
         _frame.HeaderWeekly.SetShown(open && s.UsageRingWeekly, animate);
+        SetUsageNumbers(_usageHovered);
         ApplyTargets();
         RemeasureMatchedSoon();
     }
@@ -101,13 +102,19 @@ public sealed partial class NotchWindow
         Vm.Usage.SetRingDemand(wanted, onScreen);
     }
 
-    /// <summary>The usage rings show the % while the notch is hovered (like the battery ring).</summary>
-    private void SetUsageNumbers(bool on)
+    /// <summary>The usage rings show the % while the notch is hovered (like the battery ring), or always with "Always show usage percent".</summary>
+    private void SetUsageNumbers(bool hovered)
     {
         if (_closedFiveHour == null) return;
-        _closedFiveHour.ShowNumber = on;
-        _closedWeekly.ShowNumber = on;
+        _usageHovered = hovered;
+        bool always = UsageSettings?.UsageRingAlwaysPercent == true;
+        _closedFiveHour.ShowNumber = hovered || always;
+        _closedWeekly.ShowNumber = hovered || always;
+        _frame.HeaderFiveHour.ShowNumber = always;
+        _frame.HeaderWeekly.ShowNumber = always;
     }
+
+    private bool _usageHovered;
 
     /// <summary>
     /// Something moved in the header or on the closed notch without changing its own size (a ring appeared next to it):

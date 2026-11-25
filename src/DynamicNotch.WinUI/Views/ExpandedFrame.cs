@@ -117,8 +117,8 @@ public sealed class ExpandedFrame : Grid
         _content.Children.Add(_viewport);
         _viewport.SizeChanged += (_, e) =>
         {
-            // Room below for the media player's lyrics layout (the notch grows by that much; the body clip still applies).
-            _viewportClip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height + Theme.LyricsExtraHeight);
+            // Room below for the media player's lyrics layout and Spotify panel (the notch grows by that much; the body clip still applies).
+            _viewportClip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height + Math.Max(Theme.LyricsExtraHeight, Theme.SpotifyPanelHeight));
             _n.InsertScalar("Slot", (float)e.NewSize.Width);
             LayoutPages();
         };
@@ -140,10 +140,10 @@ public sealed class ExpandedFrame : Grid
         _content.Children.Add(_footer);
         // The footer keeps a constant distance from the notch's bottom edge as the height changes
         // between the music page, the taller pages and the media player's lyrics layout (compositor transform only).
-        var shift = Anim.Expr(notch.Compositor, $"Vector3(0, Clamp(N.H - {Anim.F(Theme.ExpandedHeight)}, {Anim.F(Theme.MusicExpandedHeight - Theme.ExpandedHeight)}, {Anim.F(Theme.LyricsExpandedHeight - Theme.ExpandedHeight)}), 0)", ("N", notch));
+        var shift = Anim.Expr(notch.Compositor, $"Vector3(0, Clamp(N.H - {Anim.F(Theme.ExpandedHeight)}, {Anim.F(Theme.MusicExpandedHeight - Theme.ExpandedHeight)}, {Anim.F(Math.Max(Theme.LyricsExpandedHeight, Theme.SpotifyExpandedHeight) - Theme.ExpandedHeight)}), 0)", ("N", notch));
         Anim.VisualOf(_footer, translation: true).StartAnimation("Translation", shift);
 
-        Music = new MusicPage(vm.Music, vm.SpotifyLike, vm.Lyrics, notch.Compositor);
+        Music = new MusicPage(vm.Music, vm.SpotifyLike, vm.Lyrics, vm.SpotifyLibrary, notch.Compositor);
         _pageViews[PageId.Music] = Music;
         // The glow places its main blob and shockwaves behind the art and its scrim behind the text column (and, in the
         // lyrics layout, its vocal ribbon behind the current line); while the layout morphs, it glides along.

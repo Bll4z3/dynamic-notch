@@ -127,7 +127,7 @@ public sealed class ThemeService
         if (a.PerformanceMode != b.PerformanceMode) parts |= Part.Performance;
         if (a.LyricsOnClosedNotch != b.LyricsOnClosedNotch || a.LyricsWordByWord != b.LyricsWordByWord || a.LyricsTextSize != b.LyricsTextSize
             || a.LyricsOffsetMs != b.LyricsOffsetMs || a.LyricsGlow != b.LyricsGlow) parts |= Part.Lyrics;
-        if (a.UsageRingWeekly != b.UsageRingWeekly || a.UsageRingFiveHour != b.UsageRingFiveHour || a.UsageRingPlace != b.UsageRingPlace) parts |= Part.UsageRings;
+        if (a.UsageRingWeekly != b.UsageRingWeekly || a.UsageRingFiveHour != b.UsageRingFiveHour || a.UsageRingPlace != b.UsageRingPlace || a.UsageRingAlwaysPercent != b.UsageRingAlwaysPercent) parts |= Part.UsageRings;
         if (parts != Part.None) Changed?.Invoke(parts);
     }
 

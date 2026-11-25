@@ -348,6 +348,8 @@ internal sealed class CustomisationTabView : Grid
         yield return Toggle("5-hour usage", "A blue ring marked 5h", s => s.UsageRingFiveHour, (s, v) => s.UsageRingFiveHour = v, demo);
         yield return Choice("Show on", null, s => s.UsageRingPlace, (s, v) => s.UsageRingPlace = v, demo,
             ("closed", "Closed notch"), ("open", "Open notch"), ("both", "Both"));
+        yield return Toggle("Always show usage percent", "The % in each ring all the time, instead of 5h / W until you hover",
+            s => s.UsageRingAlwaysPercent, (s, v) => s.UsageRingAlwaysPercent = v, demo);
         yield return Extend(new TextBlock
         {
             Text = "Right of the battery ring. They turn amber from 60% and red from 85%. Hover one in the open notch for the exact % and when it resets. Uses the same data as the Claude Usage page.",

@@ -58,6 +58,15 @@ public sealed class MediaService : IDisposable
 
     public MediaSnapshot Snapshot { get; private set; } = MediaSnapshot.Empty;
 
+    /// <summary>Dev (--media-trace): times every command, OS event, refresh step and publish in media.log.</summary>
+    public static bool Trace { get; set; }
+    private static readonly System.Diagnostics.Stopwatch TraceClock = System.Diagnostics.Stopwatch.StartNew();
+    internal static void Log(string line)
+    {
+        if (!Trace) return;
+        try { File.AppendAllText(Path.Combine(SettingsService.DataFolder, "media.log"), $"{TraceClock.ElapsedMilliseconds,8} ms  {line}\n"); } catch { }
+    }
+
     /// <summary>Raised on the UI thread.</summary>
     public event Action<MediaSnapshot>? Changed;
 
@@ -99,10 +108,147 @@ public sealed class MediaService : IDisposable
         Publish(MediaSnapshot.Empty);
     }
 
-    // ---- Commands ----------------------------------------------------------------------------
-    public async void PlayPause() { try { if (_session != null) await _session.TryTogglePlayPauseAsync(); } catch { } }
-    public async void Next() { try { if (_session != null) await _session.TrySkipNextAsync(); } catch { } }
-    public async void Previous() { try { if (_session != null) await _session.TrySkipPreviousAsync(); } catch { } }
+    // ---- Commands (optimistic) -----------------------------------------------------------------
+    // Some players report changes through the media session seconds late (Spotify: 2-3 s after play / pause / skip,
+    // measured with --media-test), although the music itself changes at once. So each command shows its result
+    // straight away and the player's own reports are reconciled with it (see Reconcile): a report that still shows the
+    // old state is overridden for a few seconds, one that confirms the prediction ends the override, and one that shows
+    // something else wins (the prediction was wrong).
+
+    /// <summary>A song the notch expects to play next (or before): what to show until the player reports it.</summary>
+    public sealed record MediaPrediction(string Title, string Artist, Windows.Graphics.Imaging.SoftwareBitmap? Art, TimeSpan Duration, string ForTitle);
+
+    /// <summary>The next song in the queue for the current one (set from Spotify's queue; ignored once the song changes).</summary>
+    public MediaPrediction? UpNext { get; set; }
+
+    private MediaPrediction? _previousTrack; // the song before this one (Previous at the start of a song goes back to it)
+    private Override? _ovr;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _ovrTimer;
+    private static readonly TimeSpan OverrideFor = TimeSpan.FromSeconds(4);
+
+    /// <summary>What a command promised: a play state, a song, or a restart (position 0), until the player catches up.</summary>
+    private sealed record Override(DateTimeOffset Until, bool? Playing, MediaPrediction? Track, bool Restart, string FromTitle);
+
+    public async void PlayPause()
+    {
+        Log("cmd PlayPause");
+        if (_session == null) return;
+        var s = Snapshot;
+        if (s.HasMedia && s.CanPlayPause)
+        {
+            bool target = !s.IsPlaying;
+            StartOverride(new Override(DateTimeOffset.Now + OverrideFor, target, _ovr?.Track, _ovr?.Restart ?? false, _ovr?.FromTitle ?? s.Title));
+            PublishOptimistic(s with { IsPlaying = target, Position = s.PositionNow, PositionSampledAt = DateTimeOffset.Now });
+        }
+        try { await _session.TryTogglePlayPauseAsync(); } catch { }
+    }
+
+    public async void Next()
+    {
+        Log("cmd Next");
+        if (_session == null) return;
+        var s = Snapshot;
+        if (s.CanNext && IsSpotify(s) && UpNext is { } next && SameTitle(next.ForTitle, s.Title))
+        {
+            StartOverride(new Override(DateTimeOffset.Now + OverrideFor, true, next, true, s.Title));
+            PublishOptimistic(AsTrack(s, next));
+        }
+        try { await _session.TrySkipNextAsync(); } catch { }
+    }
+
+    public async void Previous()
+    {
+        Log("cmd Previous");
+        if (_session == null) return;
+        var s = Snapshot;
+        if (s.CanPrevious && IsSpotify(s))
+        {
+            if (s.PositionNow > TimeSpan.FromSeconds(3))
+            {
+                // Spotify restarts the song when it's more than a few seconds in.
+                StartOverride(new Override(DateTimeOffset.Now + OverrideFor, _ovr?.Playing, null, true, s.Title));
+                PublishOptimistic(s with { Position = TimeSpan.Zero, PositionSampledAt = DateTimeOffset.Now });
+            }
+            else if (_previousTrack is { } prev)
+            {
+                StartOverride(new Override(DateTimeOffset.Now + OverrideFor, true, prev, true, s.Title));
+                PublishOptimistic(AsTrack(s, prev));
+            }
+        }
+        try { await _session.TrySkipPreviousAsync(); } catch { }
+    }
+
+    private static bool IsSpotify(MediaSnapshot s) => s.SourceApp.Contains("Spotify", StringComparison.OrdinalIgnoreCase);
+
+    private static bool SameTitle(string a, string b) => string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static MediaSnapshot AsTrack(MediaSnapshot s, MediaPrediction p) => s with
+    {
+        Title = p.Title, Artist = p.Artist, Artwork = p.Art, Album = "", IsPlaying = true,
+        Position = TimeSpan.Zero, PositionSampledAt = DateTimeOffset.Now, Duration = p.Duration > TimeSpan.Zero ? p.Duration : s.Duration,
+    };
+
+    private void StartOverride(Override o)
+    {
+        _ovr = o;
+        // When it runs out, ask the player once more (its late report may have come and gone meanwhile).
+        _ovrTimer ??= Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.CreateTimer();
+        if (_ovrTimer == null) return;
+        _ovrTimer.IsRepeating = false;
+        _ovrTimer.Interval = OverrideFor + TimeSpan.FromMilliseconds(100);
+        _ovrTimer.Tick -= OnOverrideEnded;
+        _ovrTimer.Tick += OnOverrideEnded;
+        _ovrTimer.Stop();
+        _ovrTimer.Start();
+    }
+
+    private void OnOverrideEnded(Microsoft.UI.Dispatching.DispatcherQueueTimer t, object e) { t.Stop(); QueueRefresh(reselect: false); }
+
+    private void PublishOptimistic(MediaSnapshot s)
+    {
+        Log($"optimistic '{s.Title}' playing={s.IsPlaying}");
+        NoteTrack(s);
+        Snapshot = s;
+        Changed?.Invoke(s);
+    }
+
+    /// <summary>The player's report, adjusted for a command it hasn't caught up with yet.</summary>
+    private MediaSnapshot Reconcile(MediaSnapshot os)
+    {
+        if (_ovr is not { } o) return os;
+        if (DateTimeOffset.Now >= o.Until) { _ovr = null; return os; }
+        var shown = Snapshot;
+        if (o.Track is { } t)
+        {
+            if (SameTitle(os.Title, t.Title)) { _ovr = o.Playing is { } p && os.IsPlaying != p ? o with { Track = null, Restart = false } : null; }
+            else if (SameTitle(os.Title, o.FromTitle))
+                return os with { Title = shown.Title, Artist = shown.Artist, Artwork = shown.Artwork, Album = shown.Album, Duration = shown.Duration,
+                                 IsPlaying = o.Playing ?? os.IsPlaying, Position = shown.Position, PositionSampledAt = shown.PositionSampledAt, PlaybackRate = shown.PlaybackRate };
+            else { _ovr = null; return os; } // a different song than predicted: the player is right
+        }
+        if (_ovr is not { } o2) return os;
+        if (o2.Restart)
+        {
+            if (!SameTitle(os.Title, o2.FromTitle) && o2.Track == null) { _ovr = null; return os; }
+            if (os.Position < TimeSpan.FromSeconds(3) && o2.Playing is null) { _ovr = null; return os; }
+            if (os.Position >= TimeSpan.FromSeconds(3)) os = os with { Position = shown.Position, PositionSampledAt = shown.PositionSampledAt };
+        }
+        if (o2.Playing is { } playing)
+        {
+            if (os.IsPlaying == playing) { if (!o2.Restart || os.Position < TimeSpan.FromSeconds(3)) _ovr = null; }
+            else os = os with { IsPlaying = playing, Position = shown.Position, PositionSampledAt = shown.PositionSampledAt };
+        }
+        return os;
+    }
+
+    /// <summary>Remembers the previous song whenever the title changes (for Previous at the start of a song).</summary>
+    private void NoteTrack(MediaSnapshot s)
+    {
+        var cur = Snapshot;
+        if (string.IsNullOrWhiteSpace(s.Title) || string.IsNullOrWhiteSpace(cur.Title) || SameTitle(s.Title, cur.Title)) return;
+        if (_previousTrack is { } p && SameTitle(p.Title, s.Title)) _previousTrack = null; // went back to it: forget it
+        else _previousTrack = new MediaPrediction(cur.Title, cur.Artist, cur.Artwork, cur.Duration, s.Title);
+    }
 
     public async void Seek(TimeSpan position) => await SeekAsync(position);
 
@@ -172,8 +318,10 @@ public sealed class MediaService : IDisposable
                 return;
             }
 
+            Log("refresh start");
             var props = await _session.TryGetMediaPropertiesAsync();
             var playback = _session.GetPlaybackInfo();
+            Log($"refresh props: '{props?.Title}' {playback.PlaybackStatus}");
             var timeline = _session.GetTimelineProperties();
             var controls = playback.Controls;
 
@@ -182,14 +330,22 @@ public sealed class MediaService : IDisposable
             if (string.IsNullOrEmpty(artist)) artist = props?.AlbumArtist ?? "";
 
             string key = $"{_session.SourceAppUserModelId}|{title}|{artist}";
+            // The player now reports the song the notch already predicted: keep the predicted cover (same bitmap, so
+            // nothing re-animates) instead of decoding the player's thumbnail a second later.
+            if (key != _artKey && _ovr?.Track is { Art: { } predictedArt } t && SameTitle(title, t.Title))
+            {
+                _artKey = key;
+                _art = predictedArt;
+            }
             if (key != _artKey)
             {
                 _artKey = key;
                 _art = await LoadArtworkAsync(props);
+                Log($"refresh art loaded ({(_art != null ? "yes" : "none")})");
             }
 
             var duration = timeline.EndTime - timeline.StartTime;
-            Publish(new MediaSnapshot(
+            Publish(Reconcile(new MediaSnapshot(
                 title, artist, _art,
                 playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing,
                 timeline.Position - timeline.StartTime,
@@ -200,7 +356,7 @@ public sealed class MediaService : IDisposable
                 controls.IsPlayPauseToggleEnabled || controls.IsPlayEnabled || controls.IsPauseEnabled,
                 controls.IsPlaybackPositionEnabled && duration > TimeSpan.Zero,
                 FriendlyAppName(_session.SourceAppUserModelId),
-                count) { Album = props?.AlbumTitle ?? "" });
+                count) { Album = props?.AlbumTitle ?? "" }));
         }
         catch (Exception ex)
         {
@@ -250,13 +406,19 @@ public sealed class MediaService : IDisposable
         _session = null;
     }
 
-    private void OnSessionChanged(GlobalSystemMediaTransportControlsSession sender, object args) => QueueRefresh(reselect: false);
+    private void OnSessionChanged(GlobalSystemMediaTransportControlsSession sender, object args)
+    {
+        Log($"event {args.GetType().Name}");
+        QueueRefresh(reselect: false);
+    }
 
     private void Publish(MediaSnapshot s)
     {
         if (!_running && !ReferenceEquals(s, MediaSnapshot.Empty)) return; // a refresh that finished after Stop()
+        NoteTrack(s);
         Snapshot = s;
         Changed?.Invoke(s);
+        Log($"published '{s.Title}' playing={s.IsPlaying}");
     }
 
     private static async Task<Windows.Graphics.Imaging.SoftwareBitmap?> LoadArtworkAsync(GlobalSystemMediaTransportControlsSessionMediaProperties? props)

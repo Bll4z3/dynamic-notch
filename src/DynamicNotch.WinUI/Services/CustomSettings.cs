@@ -77,6 +77,8 @@ public sealed class CustomSettings
     public bool UsageRingFiveHour { get; set; }
     /// <summary>Where the rings show: closed (the closed notch), open (the open notch's header) or both.</summary>
     public string UsageRingPlace { get; set; } = "both";
+    /// <summary>The rings always show their % (instead of "5h" / "W" until hovered).</summary>
+    public bool UsageRingAlwaysPercent { get; set; }
 
     // ---- Collapsed notch ----
     public bool ShowBatteryRing { get; set; } = true;

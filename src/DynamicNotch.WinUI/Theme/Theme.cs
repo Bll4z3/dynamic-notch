@@ -182,7 +182,9 @@ public static class Theme
     public const double AskThinkingWidth = 560, AskThinkingHeight = 130;
     public const double AskAnswerWidth = 600, AskAnswerMinHeight = 230, AskAnswerMaxHeight = 420;
     /// <summary>The tallest the expanded notch ever gets (the Ask answer); the host window is sized for it.</summary>
-    public const double ExpandedMaxHeight = AskAnswerMaxHeight > ExpandedHeight ? AskAnswerMaxHeight : ExpandedHeight;
+    public const double ExpandedMaxHeight = SpotifyExpandedHeight > AskAnswerMaxHeight ? SpotifyExpandedHeight : AskAnswerMaxHeight;
+    /// <summary>The media player's Spotify panel: the row under the player that the notch grows down to show.</summary>
+    public const double SpotifyPanelHeight = 200, SpotifyExpandedHeight = MusicExpandedHeight + SpotifyPanelHeight;
     public static readonly Thickness AskPadding = new(S4, S3, S4, S3);
     public const double AskInputMinHeight = 36, AskInputLineHeight = 18, AskInputMaxLines = 3;
     public const double AskInputMaxHeight = AskInputLineHeight * AskInputMaxLines + 18;
@@ -341,6 +343,8 @@ public static class Theme
     public const double ActivityIconBox = 26, ActivityIconSize = 20, ActivityCompactIconSize = 16;
     public const double ActivityTrackHeight = 6, ActivityThumbSize = 14;
     public const double ActivityValueWidth = 44;
+    /// <summary>"Next song": a taller pill (the cover sits on the left), its width, and the cover's size and radius.</summary>
+    public const double ActivityNextSongHeight = 64, ActivityWidthNextSong = 340, NextSongArtSize = 44, NextSongArtRadius = 10;
     public const double FontActivityTitle = 13, FontActivityValue = 14, FontActivityGlyph = 20;
     public static readonly Color VolumeColor = Rgb(0xF5, 0xF5, 0xF7);
     public static readonly Color VolumeMutedColor = Argb(0x59, 0xF5, 0xF5, 0xF7);

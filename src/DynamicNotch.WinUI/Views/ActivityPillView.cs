@@ -242,8 +242,12 @@ public sealed class ActivityPillView : Grid
         ActivityKind.CapsLock => Theme.ActivityWidthCaps,
         ActivityKind.Download => Theme.ActivityWidthDownload,
         ActivityKind.Update => Theme.ActivityWidthUpdate,
+        ActivityKind.NextSong => Theme.ActivityWidthNextSong,
         _ => Theme.ActivityWidthBattery,
     };
+
+    /// <summary>Pill height for an activity kind ("Next song" is taller: it carries the cover).</summary>
+    public static double HeightFor(ActivityKind k) => k == ActivityKind.NextSong ? Theme.ActivityNextSongHeight : Theme.ActivityHeight;
 
     /// <summary>
     /// Shows <paramref name="a"/>: in place when it's the same kind as now, otherwise a quick cross-fade

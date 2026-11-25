@@ -117,6 +117,7 @@ public sealed partial class NotchWindow
         if (!_hasFocus) return;
         _hasFocus = false;
         _frame.Ask.ClearFocus();
+        _frame.Music.SpotifyPanel.ClearFocus();
         if (_hwnd != IntPtr.Zero) Native.SetExStyle(_hwnd, Native.WS_EX_NOACTIVATE, 0);
         var prev = _previousForeground;
         _previousForeground = IntPtr.Zero;

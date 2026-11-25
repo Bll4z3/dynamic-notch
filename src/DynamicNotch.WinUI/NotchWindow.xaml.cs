@@ -100,6 +100,8 @@ public sealed partial class NotchWindow : Window
         BuildLyrics();
         BuildUsageRings();
         BuildPillIcon();
+        BuildNextSong();
+        BuildSpotifyPanel();
         UpdateGlowColor(animate: false);
         // Any click on the notch pins it, including clicks that a button inside it handles.
         NotchRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Notch_PointerPressed), handledEventsToo: true);
@@ -364,11 +366,13 @@ public sealed partial class NotchWindow : Window
         Vm.HoldPill(next is NotchState.Expanded or NotchState.Activity || _hint);
         if (next == NotchState.Expanded && Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
         if (next == NotchState.Expanded) _frame.Stagger.Prime(); // the album art shows from the first frame of its flight
+        if (next == NotchState.Expanded && IsNextSongActivity) Ui.Post(() => { if (IsNextSongActivity) Vm.Activity.Dismiss(); }); // the open player shows the song itself
         // An activity pill that ended under the pointer: carry on as a normal hover (open after the usual delay).
         if (prev == NotchState.Activity && next != NotchState.Expanded && _mouseOver) { _hoverActivity = false; if (!ClickToOpen) Restart(_expandTimer, HoverDelayMs); }
         if (prev == NotchState.Expanded && next != NotchState.Expanded)
         {
             Unpin();
+            Vm.SpotifyLibrary.Close(); // the notch opens at its usual height next time
             _frame.Shelf.ClosePreview();
             _frame.Preview.SetShown(false);
             _frame.Popup.CloseAll();
@@ -385,7 +389,9 @@ public sealed partial class NotchWindow : Window
     /// <summary>Expanded size for the current page: Ask sizes itself to its state and content.</summary>
     private (double Width, double Height) ExpandedTarget() => Vm.IsAskPage ? _frame.Ask.DesiredNotchSize
         : Vm.IsPaletteOpen ? _frame.Palette.DesiredNotchSize
-        : (Theme.ExpandedWidth, Vm.IsMusicPage && !_frame.Popup.IsOpen ? (_frame.Music.IsLyricsLayout ? Theme.LyricsExpandedHeight : Theme.MusicExpandedHeight) : Theme.ExpandedHeight);
+        : (Theme.ExpandedWidth, Vm.IsMusicPage && !_frame.Popup.IsOpen
+            ? (_frame.Music.IsLyricsLayout ? Theme.LyricsExpandedHeight : Theme.MusicExpandedHeight + (Vm.SpotifyLibrary.IsOpen ? Theme.SpotifyPanelHeight : 0))
+            : Theme.ExpandedHeight);
 
     private void ApplyTargets(bool immediate = false)
     {
@@ -413,6 +419,7 @@ public sealed partial class NotchWindow : Window
                 (w, h) = expanded;
                 if (Vm.IsPaletteOpen && _expandedRevealed) preset = Motion.PaletteResize;
                 else if (Vm.IsAskPage && _expandedRevealed) preset = Motion.AskResize;
+                else if (_spotifyResize && _expandedRevealed) preset = Motion.SpotifyPanelResize; // the playlist panel: one smooth glide down / up
                 else if (_lyricsResize && _expandedRevealed && Math.Abs(h - _height.Target) > 0.5)
                 {
                     // The media player's lyrics layout: the notch grows with the blocks' downward move (lead) and, when
@@ -426,7 +433,7 @@ public sealed partial class NotchWindow : Window
                 w = Theme.PillWidth; h = Theme.PillHeight; preset = Motion.Pop; // pop with a little overshoot
                 break;
             case NotchState.Activity:
-                w = ActivityWidth(); h = Theme.ActivityHeight; preset = Motion.ActivityMorph;
+                w = ActivityWidth(); h = ActivityHeight(); preset = Motion.ActivityMorph;
                 break;
             default:
                 w = minimal ? Theme.MinimalWidth : playing || timer ? Theme.CollapsedPlayingWidth : Theme.CollapsedWidth;
@@ -517,8 +524,9 @@ public sealed partial class NotchWindow : Window
                 reveal = () => _pillContent.SetTarget(1, Motion.Pop);
                 break;
             case NotchState.Activity when _activityContent.Target < 1:
-                ready = h => Progress(h, Theme.CollapsedHeight, Theme.ActivityHeight) >= Motion.ContentRevealThreshold;
-                reveal = () => { _activityContent.SetTarget(1, Motion.Pop); _activityView.Enter(); };
+                double ah = ActivityHeight();
+                ready = h => Progress(h, Theme.CollapsedHeight, ah) >= Motion.ContentRevealThreshold;
+                reveal = () => { _activityContent.SetTarget(1, Motion.Pop); if (IsNextSongActivity) _nextSongView.Enter(); else _activityView.Enter(); };
                 break;
             case NotchState.Collapsed when !Vm.MinimalNotch && _collapsedContent.Target < 1:
                 ready = h => MorphProgress(h) < 0.3 && h > Theme.CollapsedHeight * 0.6;
@@ -605,6 +613,7 @@ public sealed partial class NotchWindow : Window
                 if (Vm.IsShelfPage) Vm.Shelf.RefreshExistence();
                 else _frame.Shelf.ClosePreview();
                 if (!Vm.IsAskPage) _frame.Preview.SetShown(false);
+                if (!Vm.IsMusicPage) Vm.SpotifyLibrary.Close();
                 if (!Vm.IsAskPage && !Vm.IsPaletteOpen && _hasFocus) ReleaseFocus(restore: true); // no text boxes on the other pages
                 Vm.Music.IsVisible = _state == NotchState.Expanded && Vm.IsMusicPage;
                 _frame.Popup.CloseAll(); // the pop-up belongs to the header of the page you were on
@@ -818,7 +827,7 @@ public sealed partial class NotchWindow : Window
                 if (Vm.Music.PlayPauseCommand.CanExecute(null)) Vm.Music.PlayPauseCommand.Execute(null);
                 break;
             case NotchKey.Escape:
-                if (!EscapeClosesPopover()) CollapseAsk();
+                if (!EscapeClosesPopover() && !EscapeClosesSpotify()) CollapseAsk();
                 break;
         }
     }
