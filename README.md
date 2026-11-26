@@ -5,10 +5,13 @@ Built with C# / .NET 8 / WinUI 3 (Windows App SDK 1.8, self-contained). The notc
 
 ## Download
 
-1. Open the [Releases](../../releases) page and download the zip for your PC: `win-x64` (most PCs) or `win-ARM64` (Snapdragon / ARM laptops).
-2. Extract it anywhere (e.g. `%LocalAppData%\Programs\DynamicNotch`) and run `DynamicNotch.exe`. Nothing else needs installing: on first run it adds itself to the Start menu (**Dynamic Notch**), and if you move the folder later it updates that shortcut and **Start with Windows** the next time you run it from the new place.
-3. Windows SmartScreen may warn that the app is unrecognised (it isn't code-signed). Click **More info ▸ Run anyway**.
-4. For **Ask Claude**, paste your own Claude API key in Settings. It's encrypted and stored only on your PC.
+1. Open the [Releases](../../releases) page and download `DynamicNotch-Setup-vX.Y.Z.exe`, one setup for every PC (x64 and Arm64).
+2. Run it. Windows SmartScreen may warn that the app is unrecognised (it isn't code-signed): click **More info ▸ Run anyway**. It installs just for you (no admin prompt) to `%LocalAppData%\Programs\DynamicNotch`, adds **Dynamic Notch** to the Start menu, and can start it when you sign in. Uninstall it from **Settings ▸ Apps**; your settings are kept.
+3. For **Ask Claude**, paste your own Claude API key in Settings. It's encrypted and stored only on your PC.
+
+Updates install from **Settings ▸ Updates** either way.
+
+**Portable zip (no installer):** download the zip for your PC instead: `win-x64` (most PCs) or `win-ARM64` (Snapdragon / ARM laptops). Extract it anywhere (e.g. `%LocalAppData%\Programs\DynamicNotch`) and run `DynamicNotch.exe`. On first run it adds itself to the Start menu, and if you move the folder later it updates that shortcut and **Start with Windows** the next time you run it from the new place.
 
 ## Run it from source
 
@@ -19,6 +22,7 @@ Built with C# / .NET 8 / WinUI 3 (Windows App SDK 1.8, self-contained). The notc
 | Packaged debug run (with app notifications) | `.\scripts\register-dev.ps1` | Needs **Developer Mode**. Re-registers over the existing package, so settings and the key are kept |
 | Remove the packaged dev build | `.\scripts\register-dev.ps1 -Unregister` | Deletes the package's data; it's backed up to `artifacts\package-data-backup` first |
 | Installable signed .msix | `.\scripts\make-msix.ps1 -TrustCert` | Needs the Windows SDK (see below) |
+| Setup .exe (x64 + Arm64) | `.\scripts\make-installer.ps1` | Needs Inno Setup: `winget install --id JRSoftware.InnoSetup -e --scope user`. `-X64Zip` / `-Arm64Zip` package existing release zips instead of publishing |
 
 Or open `DynamicNotch.sln` in Visual Studio / VS Code and run the `DynamicNotch.WinUI` project (platform x64 or ARM64). It builds `DynamicNotch.exe`.
 
