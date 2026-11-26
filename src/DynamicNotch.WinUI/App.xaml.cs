@@ -328,6 +328,8 @@ public partial class App : Application
         brightnessKeys.FallbackKeyTick = () => keys.LastKeyTick; // PCs whose brightness keys aren't HID buttons
         updates.Start();
         _ = quick.StartAsync();
+        // Portable zip: add itself to the Start menu and keep the Run value on this exe (off the UI thread; never throws).
+        _ = Task.Run(StartMenuService.EnsureRegistered);
         if (pages.IsEnabled(PageId.Music)) await media.StartAsync();
         // The real state wins (Task Manager / Windows Settings can change it while the app is closed), so the
         // switch in Settings ▸ General and the saved value match what Windows will actually do.
